@@ -1,0 +1,12 @@
+services:
+  verified:
+    build: .
+    image: verified-face-chain
+    env_file: .env
+    environment:
+      HOST: 0.0.0.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runs:/app/runs
+      - ./.env:/app/.env      # lets the app persist CONTRACT_ADDRESS / COMMITMENT_SALT

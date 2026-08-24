@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VERIFIED — face → post → chain</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+<div class="bg"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="grain"></div></div>
+
+<header class="top">
+  <div class="brand">
+    <div class="mark"><span>✓</span></div>
+    <div>
+      <div class="name">VERIFIED</div>
+      <div class="tag">face → post → chain · tamper-evident identity provenance</div>
+    </div>
+  </div>
+  <div class="status" id="status">
+    <span class="pill dim" id="pill-chain">connecting…</span>
+    <span class="pill dim" id="pill-wallet"></span>
+    <span class="pill dim" id="pill-engines"></span>
+  </div>
+</header>
+
+<main>
+  <!-- ============================ STAGE RAIL ============================ -->
+  <nav class="rail" id="rail">
+    <div class="step" data-stage="face"><i>1</i><b>Face scan</b><small>SCRFD · ArcFace-512 · liveness</small></div>
+    <div class="step" data-stage="search"><i>2</i><b>Genuine search</b><small>Lens · Yandex · Vision · Bluesky</small></div>
+    <div class="step" data-stage="evidence"><i>3</i><b>Evidence</b><small>canonical bundle · Merkle</small></div>
+    <div class="step" data-stage="ipfs"><i>4</i><b>IPFS</b><small>CIDv1 · Pinata</small></div>
+    <div class="step" data-stage="chain"><i>5</i><b>Anchor</b><small>VerifiedRegistry · Sepolia</small></div>
+    <div class="step" data-stage="eas"><i>6</i><b>EAS</b><small>attestation</small></div>
+    <div class="step" data-stage="ots"><i>7</i><b>Bitcoin</b><small>OpenTimestamps</small></div>
+    <div class="step" data-stage="verify"><i>8</i><b>Re-verify</b><small>independent checks</small></div>
+  </nav>
+
+  <!-- ============================ 1. SCAN ============================ -->
+  <section class="panel" id="panel-scan">
+    <div class="panel-head">
+      <h2><span class="num">01</span> Face scan</h2>
+      <div class="actions">
+        <label class="switch"><input type="checkbox" id="auto-anchor" checked /><span></span> auto-anchor best match</label>
+      </div>
+    </div>
+    <div class="scan-grid">
+      <div class="cam-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="cam-idle" id="cam-idle">
+          <div class="cam-idle-inner">
+            <div class="ring"></div>
+            <p>Start the camera for a live scan with liveness check,<br/>or drop a photo to search from an image.</p>
+            <div class="row">
+              <button class="btn primary" id="btn-cam">Start camera</button>
+              <button class="btn ghost" id="btn-upload">Upload photo</button>
+              <input type="file" id="file" accept="image/*" hidden />
+            </div>
+          </div>
+        </div>
+        <div class="cam-hud" id="cam-hud" hidden>
+          <div class="hud-left">
+            <div class="meter"><span>quality</span><div class="bar"><i id="q-bar"></i></div><b id="q-val">–</b></div>
+            <div class="meter"><span>sharp</span><div class="bar"><i id="q-sharp"></i></div></div>
+            <div class="meter"><span>size</span><div class="bar"><i id="q-size"></i></div></div>
+            <div class="meter"><span>frontal</span><div class="bar"><i id="q-front"></i></div></div>
+          </div>
+          <div class="hud-right">
+            <div class="live" id="live"><span class="dot"></span> liveness: turn head <b class="l">←</b> <b class="r">→</b></div>
+            <div class="hint" id="hint">looking for a face…</div>
+          </div>
+        </div>
+      </div>
+      <div class="scan-side">
+        <div class="card soft">
+          <h3>Capture</h3>
+          <p class="muted">The face is detected with SCRFD-10GF and encoded to a 512-d ArcFace template. Only a salted HMAC commitment of the template is ever published — never the biometric.</p>
+          <button class="btn primary big" id="btn-capture" disabled>Capture &amp; search</button>
+          <button class="btn ghost" id="btn-stop" hidden>Stop camera</button>
+        </div>
+        <div class="card soft" id="face-card" hidden>
+          <h3>Detected face</h3>
+          <div class="face-row">
+            <img id="face-crop" alt="face crop" />
+            <div class="kv">
+              <div><span>det score</span><b id="f-det">–</b></div>
+              <div><span>quality</span><b id="f-q">–</b></div>
+              <div><span>est. age / gender</span><b id="f-ag">–</b></div>
+              <div><span>faces in frame</span><b id="f-n">–</b></div>
+              <div><span>template</span><b>512-d · L2=1.000</b></div>
+            </div>
+          </div>
+          <div class="hash"><span>face commitment</span><code id="f-commit">–</code></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 2. SEARCH ============================ -->
+  <section class="panel" id="panel-search" hidden>
+    <div class="panel-head">
+      <h2><span class="num">02</span> Genuine search <span class="sub" id="search-sub"></span></h2>
+      <div class="engines" id="engines"></div>
+    </div>
+    <div class="search-grid">
+      <div>
+        <div class="card soft">
+          <div class="card-title"><h3>Biometric re-verification</h3><span class="muted" id="verify-count">0 / 0</span></div>
+          <div class="progress"><i id="verify-bar"></i></div>
+          <div class="cand-grid" id="cands"></div>
+        </div>
+      </div>
+      <div>
+        <div class="card soft" id="identity-card" hidden>
+          <h3>Inferred identity</h3>
+          <div class="names" id="names"></div>
+        </div>
+        <div class="card soft">
+          <div class="card-title"><h3>Verified matches</h3><span class="muted" id="match-count"></span></div>
+          <div class="matches" id="matches"><div class="empty">candidates stream in as engines respond…</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 3. CHAIN ============================ -->
+  <section class="panel" id="panel-chain" hidden>
+    <div class="panel-head">
+      <h2><span class="num">03</span> Anchored on-chain</h2>
+      <div class="actions">
+        <button class="btn ghost" id="btn-reverify">Re-verify</button>
+        <button class="btn danger" id="btn-tamper">Tamper test</button>
+      </div>
+    </div>
+    <div class="chain-grid">
+      <div class="card receipt" id="receipt">
+        <div class="receipt-head">
+          <div><div class="eyebrow">record</div><div class="big-id" id="r-id">#–</div></div>
+          <div class="chainname" id="r-chain">–</div>
+          <img id="r-qr" class="qr" alt="qr" hidden />
+        </div>
+        <div class="selected" id="r-selected"></div>
+        <div class="hashes" id="r-hashes"></div>
+        <div class="links" id="r-links"></div>
+      </div>
+      <div class="card soft">
+        <div class="card-title"><h3>Independent re-verification</h3><div class="verdict" id="verdict">…</div></div>
+        <p class="muted small">Every hash is recomputed from the stored evidence bundle and compared with the on-chain record; the live post is re-fetched to detect content drift; a Merkle proof for a single field is checked on-chain.</p>
+        <ul class="checks" id="checks"></ul>
+        <div class="tamper-note" id="tamper-note" hidden></div>
+      </div>
+    </div>
+    <div class="card soft bundle" id="bundle-card">
+      <div class="card-title"><h3>Evidence bundle (canonical JSON)</h3><span class="muted" id="bundle-meta"></span></div>
+      <pre id="bundle"></pre>
+    </div>
+  </section>
+
+  <!-- ============================ LOG + LEDGER ============================ -->
+  <section class="panel" id="panel-log">
+    <div class="panel-head"><h2><span class="num">log</span> Pipeline events</h2><span class="muted" id="run-id"></span></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <section class="panel" id="panel-ledger">
+    <div class="panel-head"><h2><span class="num">ledger</span> Previous anchors</h2></div>
+    <table class="ledger" id="ledger"><thead><tr><th>run</th><th>platform</th><th>post</th><th>sim</th><th>record</th><th>verdict</th></tr></thead><tbody></tbody></table>
+  </section>
+</main>
+
+<footer>
+  <span>VERIFIED · open source pipeline · InsightFace buffalo_l (Apache-2.0) · SerpApi · Google Vision · Bluesky · Ethereum Sepolia · EAS · IPFS · OpenTimestamps</span>
+  <span class="muted">consent-first · no biometric data leaves your machine unhashed · query crops expire in 1h</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

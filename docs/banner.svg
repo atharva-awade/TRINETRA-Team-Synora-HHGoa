@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="220" viewBox="0 0 1200 220">
+  <defs>
+    <linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#ff8a3d"/><stop offset=".55" stop-color="#ff4d7d"/><stop offset="1" stop-color="#6a5cff"/></linearGradient>
+    <radialGradient id="r1" cx=".1" cy=".1" r=".6"><stop offset="0" stop-color="#ff8a3d" stop-opacity=".45"/><stop offset="1" stop-color="#ff8a3d" stop-opacity="0"/></radialGradient>
+    <radialGradient id="r2" cx=".9" cy=".9" r=".6"><stop offset="0" stop-color="#6a5cff" stop-opacity=".5"/><stop offset="1" stop-color="#6a5cff" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1200" height="220" rx="24" fill="#07080c"/>
+  <rect width="1200" height="220" rx="24" fill="url(#r1)"/>
+  <rect width="1200" height="220" rx="24" fill="url(#r2)"/>
+  <rect x="60" y="66" width="88" height="88" rx="24" fill="url(#g)"/>
+  <text x="104" y="128" font-family="Inter,Segoe UI,Arial" font-size="52" font-weight="800" fill="#0b0d12" text-anchor="middle">✓</text>
+  <text x="180" y="112" font-family="Space Grotesk,Inter,Segoe UI,Arial" font-size="44" font-weight="700" letter-spacing="10" fill="#eef0f6">VERIFIED</text>
+  <text x="182" y="146" font-family="Inter,Segoe UI,Arial" font-size="17" fill="#8d93a6">face  →  post  →  chain   ·   tamper-evident identity provenance</text>
+  <g font-family="JetBrains Mono,Consolas,monospace" font-size="13" fill="#8d93a6">
+    <text x="640" y="84">SCRFD · ArcFace-512 · liveness</text>
+    <text x="640" y="110">Google Lens · Yandex · Vision · Bluesky · biometric re-check</text>
+    <text x="640" y="136">Ethereum Sepolia · EAS · IPFS · Bitcoin/OTS · Merkle proofs</text>
+    <text x="640" y="162" fill="#35e29a">VERIFIED  /  TAMPERED</text>
+  </g>
+</svg>

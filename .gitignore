@@ -1,0 +1,9 @@
+.env
+runs/
+models/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+*.ots
+.DS_Store
