@@ -96,6 +96,13 @@ def is_post_url(url: str, platform: str | None) -> bool:
     return False
 
 
+def _s(v) -> str:
+    """Engine payloads are untrusted: coerce anything to a plain string."""
+    if v is None or isinstance(v, (dict, list, tuple)):
+        return ""
+    return v if isinstance(v, str) else str(v)
+
+
 @dataclass
 class Candidate:
     engine: str
@@ -108,6 +115,22 @@ class Candidate:
     posted_at: str = ""
     position: int = 0
     extra: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.engine = _s(self.engine)
+        self.title = _s(self.title)[:400]
+        self.link = _s(self.link)
+        self.source = _s(self.source)[:200]
+        self.thumbnail = _s(self.thumbnail)
+        self.image = _s(self.image)
+        self.snippet = _s(self.snippet)[:1000]
+        self.posted_at = _s(self.posted_at)[:80]
+        try:
+            self.position = int(self.position)
+        except (TypeError, ValueError):
+            self.position = 0
+        if not isinstance(self.extra, dict):
+            self.extra = {}
 
     @property
     def platform(self) -> str | None:

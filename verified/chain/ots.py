@@ -58,7 +58,7 @@ def status(ots_path: Path) -> dict:
             pending.append(att.uri)
         elif isinstance(att, BitcoinBlockHeaderAttestation):
             bitcoin.append(att.height)
-    return {"file_digest": dtf.file_digest().hex(), "pending_calendars": pending, "bitcoin_block_heights": bitcoin, "status": "confirmed" if bitcoin else "pending"}
+    return {"file_digest": dtf.file_digest.hex(), "pending_calendars": pending, "bitcoin_block_heights": bitcoin, "status": "confirmed" if bitcoin else "pending"}
 
 
 def upgrade(ots_path: Path, timeout: float = 20) -> dict:

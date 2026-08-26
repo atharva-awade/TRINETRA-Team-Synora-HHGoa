@@ -69,13 +69,13 @@ def _pinata(data: bytes, filename: str, jwt: str, gateway: str) -> str:
 def publish_temporary(data: bytes, filename: str = "query.jpg", preference: str = "auto", pinata_jwt: str = "", pinata_gateway: str = "") -> tuple[str, str]:
     """Return (public_url, host_name). Tries hosts in order of preference."""
     order = {
-        "auto": ["litterbox", "tmpfiles", "0x0", "pinata"],
+        "auto": ["litterbox", "tmpfiles", "0x0"],  # pinata (permanent) only when explicitly chosen
         "litterbox": ["litterbox", "tmpfiles", "0x0"],
         "tmpfiles": ["tmpfiles", "litterbox", "0x0"],
         "0x0": ["0x0", "litterbox", "tmpfiles"],
         "pinata": ["pinata", "litterbox", "tmpfiles"],
         "none": [],
-    }[preference]
+    }.get(preference, ["litterbox", "tmpfiles", "0x0"])
     errors = []
     for name in order:
         try:

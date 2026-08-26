@@ -1,22 +1,25 @@
-# core inference (pure wheels, no compiler needed on Windows/macOS/Linux)
-onnxruntime>=1.17
-opencv-python-headless>=4.9
+# core inference — pure wheels, no C++ toolchain needed on Windows/macOS/Linux
+onnxruntime>=1.17,<2
+opencv-python-headless>=4.9,<5
 numpy>=1.26,<3
+
 # web / api
-fastapi>=0.110
-uvicorn[standard]>=0.29
-python-multipart>=0.0.9
-httpx>=0.27
-pydantic-settings>=2.2
-python-dotenv>=1.0
-beautifulsoup4>=4.12
-lxml>=5.1
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+python-multipart>=0.0.9,<1
+httpx>=0.27,<1
+pydantic-settings>=2.2,<3
+python-dotenv>=1.0,<2
+beautifulsoup4>=4.12,<5
+lxml>=5.1,<7
+
 # blockchain
-web3>=7.0
-eth-account>=0.11
+web3>=7.0,<9
+eth-account>=0.11,<1
+
 # extras
-qrcode>=7.4
-pillow>=10.2
-typer>=0.12
-rich>=13.7
-opentimestamps>=0.4.1
+qrcode>=7.4,<9
+pillow>=10.2,<12
+typer>=0.12,<1
+rich>=13.7,<15
+opentimestamps>=0.4.1,<1

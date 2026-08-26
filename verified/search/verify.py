@@ -11,6 +11,8 @@ import base64
 import hashlib
 import ipaddress
 import os
+import socket
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 
@@ -26,16 +28,65 @@ MAX_BYTES = 8 * 1024 * 1024
 _ALLOW_LOCAL = os.environ.get("ALLOW_LOCAL_FETCH", "") == "1"
 
 
+_dns_cache: dict[str, tuple[bool, float]] = {}
+_DNS_TTL = 120.0
+
+
+def _bad_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+
+
 def _is_private_host(url: str) -> bool:
-    """SSRF guard: never let engine-supplied URLs point the fetcher at local/private networks."""
+    """SSRF guard: never let engine-supplied URLs point the fetcher at local/private
+    networks - literal IPs (any notation) and DNS names resolving there alike."""
     try:
-        host = urlparse(url).hostname or ""
-        if host in ("localhost",) or host.endswith(".local") or host.endswith(".internal"):
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
             return True
-        ip = ipaddress.ip_address(host)
-        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
-    except ValueError:
-        return False  # a normal DNS name
+        host = (parsed.hostname or "").rstrip(".")
+        if not host or host == "localhost" or host.endswith((".local", ".internal", ".localhost")):
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+                ip = ip.ipv4_mapped
+            return _bad_ip(ip)
+        except ValueError:
+            pass
+        hit = _dns_cache.get(host)
+        if hit and time.time() - hit[1] < _DNS_TTL:
+            return hit[0]
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            _dns_cache[host] = (True, time.time())
+            return True
+        bad = False
+        for info in infos:
+            ip = ipaddress.ip_address(info[4][0])
+            if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+                ip = ip.ipv4_mapped
+            if _bad_ip(ip):
+                bad = True
+                break
+        if len(_dns_cache) > 512:
+            _dns_cache.clear()
+        _dns_cache[host] = (bad, time.time())
+        return bad
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _guard_request(request: httpx.Request) -> None:
+    """httpx request hook: applied to the first request and to every redirect hop."""
+    if not _ALLOW_LOCAL and _is_private_host(str(request.url)):
+        raise httpx.RequestError(f"blocked private/unsafe destination {request.url.host}", request=request)
+
+
+def safe_client(**kwargs) -> httpx.Client:
+    hooks = kwargs.pop("event_hooks", {})
+    hooks = {**hooks, "request": list(hooks.get("request", [])) + [_guard_request]}
+    return httpx.Client(event_hooks=hooks, **kwargs)
 
 
 def fetch_image(url: str, timeout: float = 10) -> bytes | None:
@@ -44,7 +95,7 @@ def fetch_image(url: str, timeout: float = 10) -> bytes | None:
     if not _ALLOW_LOCAL and _is_private_host(url):
         return None
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout, headers={"User-Agent": UA, "Accept": "image/*,*/*;q=0.8", "Referer": "https://www.google.com/"}) as c:
+        with safe_client(follow_redirects=True, timeout=timeout, headers={"User-Agent": UA, "Accept": "image/*,*/*;q=0.8", "Referer": "https://www.google.com/"}) as c:
             with c.stream("GET", url) as r:
                 if r.status_code != 200:
                     return None
@@ -76,15 +127,17 @@ def decode_image(data: bytes) -> np.ndarray | None:
 
 
 def _b64_jpeg(img: np.ndarray, max_side: int = 160) -> str:
+    if img is None or img.size == 0:
+        return ""
     h, w = img.shape[:2]
-    s = min(1.0, max_side / max(h, w))
+    s = min(1.0, max_side / max(1, max(h, w)))
     if s < 1:
         img = cv2.resize(img, (max(1, int(w * s)), max(1, int(h * s))))
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode() if ok else ""
 
 
-def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate) -> VerifiedMatch | None:
+def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate, threshold: float = 0.40) -> VerifiedMatch | None:
     """Download the candidate image(s) and compute the best face similarity."""
     tried = []
     for url in [u for u in (cand.image, cand.thumbnail) if u]:
@@ -112,7 +165,7 @@ def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate)
         return VerifiedMatch(
             candidate=cand,
             similarity=best,
-            band=similarity_band(best),
+            band=similarity_band(best, threshold),
             face_bbox=[float(v) for v in best_face.bbox],
             candidate_faces=len(faces),
             image_used=url,
@@ -122,13 +175,13 @@ def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate)
     return None
 
 
-def verify_all(engine: FaceEngine, query_emb: np.ndarray, candidates: list[Candidate], workers: int = 6, on_progress=None) -> list[VerifiedMatch]:
+def verify_all(engine: FaceEngine, query_emb: np.ndarray, candidates: list[Candidate], workers: int = 6, on_progress=None, threshold: float = 0.40) -> list[VerifiedMatch]:
     """Verify candidates concurrently (network-bound); inference is serialised
     per ONNX session so we keep a modest pool."""
     results: list[VerifiedMatch] = []
     done = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(verify_candidate, engine, query_emb, c): c for c in candidates}
+        futs = {ex.submit(verify_candidate, engine, query_emb, c, threshold): c for c in candidates}
         for fut in as_completed(futs):
             done += 1
             try:

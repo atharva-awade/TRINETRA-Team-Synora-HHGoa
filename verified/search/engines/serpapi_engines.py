@@ -22,6 +22,14 @@ class SerpApiError(RuntimeError):
     pass
 
 
+def _pos(m: dict, i: int) -> int:
+    """Engine payloads occasionally carry null/garbage positions."""
+    try:
+        return int(m.get("position") or i + 1)
+    except (TypeError, ValueError):
+        return i + 1
+
+
 def _get(params: dict, api_key: str, timeout: float = 90) -> dict:
     params = {**params, "api_key": api_key, "output": "json"}
     r = httpx.get(SERPAPI, params=params, timeout=timeout)
@@ -59,7 +67,15 @@ def google_lens(api_key: str, *, image_id: str | None = None, url: str | None = 
         params["url"] = url
     else:
         raise ValueError("google_lens needs image_id or url")
-    data = _get(params, api_key)
+    try:
+        data = _get(params, api_key)
+    except SerpApiError:
+        if image_id and url:  # defensive: fall back to the classic URL-based request
+            params.pop("image_id")
+            params["url"] = url
+            data = _get(params, api_key)
+        else:
+            raise
     out: list[Candidate] = []
     for section in ("exact_matches", "visual_matches"):
         for i, m in enumerate(data.get(section, []) or []):
@@ -69,19 +85,19 @@ def google_lens(api_key: str, *, image_id: str | None = None, url: str | None = 
             out.append(
                 Candidate(
                     engine="google_lens" if section == "visual_matches" else "google_lens_exact",
-                    title=m.get("title", "") or "",
+                    title=str(m.get("title") or ""),
                     link=link,
                     source=m.get("source", "") or "",
                     thumbnail=m.get("thumbnail", "") or "",
                     image=m.get("image", "") or "",
-                    position=int(m.get("position", i + 1)),
+                    position=_pos(m, i),
                     extra={"exact": bool(m.get("exact_matches")) or section == "exact_matches", "image_width": m.get("image_width"), "image_height": m.get("image_height")},
                 )
             )
     for i, m in enumerate(data.get("organic_results", []) or []):
         link = m.get("link") or ""
         if link:
-            out.append(Candidate(engine="google_lens_organic", title=m.get("title", ""), link=link, source=m.get("source", "") or m.get("displayed_link", ""), thumbnail=m.get("thumbnail", "") or "", snippet=m.get("snippet", ""), position=i + 1))
+            out.append(Candidate(engine="google_lens_organic", title=str(m.get("title") or ""), link=link, source=m.get("source", "") or m.get("displayed_link", ""), thumbnail=m.get("thumbnail", "") or "", snippet=m.get("snippet", ""), position=i + 1))
     return out, data
 
 
@@ -92,17 +108,23 @@ def google_reverse_image(api_key: str, image_url: str, hl: str = "en") -> tuple[
     for i, m in enumerate(data.get("image_results", []) or []):
         link = m.get("link") or ""
         if link:
-            out.append(Candidate(engine="google_reverse", title=m.get("title", ""), link=link, source=m.get("displayed_link", "") or m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", snippet=m.get("snippet", ""), position=int(m.get("position", i + 1))))
+            out.append(Candidate(engine="google_reverse", title=str(m.get("title") or ""), link=link, source=m.get("displayed_link", "") or m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", snippet=m.get("snippet", ""), position=_pos(m, i)))
     for i, m in enumerate(data.get("inline_images", []) or []):
-        link = m.get("link") or m.get("source") or ""
+        link = m.get("source") or m.get("link") or ""  # `source` is the originating page; `link` is Google's own URL
         if link:
-            out.append(Candidate(engine="google_reverse_inline", title=m.get("title", "") or m.get("source_name", ""), link=link, source=m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", image=m.get("original", "") or "", position=i + 1))
+            out.append(Candidate(engine="google_reverse_inline", title=str(m.get("title") or m.get("source_name") or ""), link=link, source=m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", image=m.get("original", "") or "", position=i + 1))
     return out, data
 
 
 # ---------------------------------------------------------------------- Yandex
 def yandex_reverse(api_key: str, image_url: str) -> tuple[list[Candidate], dict]:
-    data = _get({"engine": "yandex_images", "url": image_url, "no_cache": "true"}, api_key)
+    try:
+        data = _get({"engine": "yandex_images", "url": image_url, "no_cache": "true"}, api_key)
+    except SerpApiError as e:
+        if "text" in str(e).lower():  # some API versions insist on the text parameter
+            data = _get({"engine": "yandex_images", "url": image_url, "text": "person", "no_cache": "true"}, api_key)
+        else:
+            raise
     out: list[Candidate] = []
     for i, m in enumerate(data.get("images_results", []) or []):
         link = m.get("link") or ""
@@ -111,14 +133,14 @@ def yandex_reverse(api_key: str, image_url: str) -> tuple[list[Candidate], dict]
         out.append(
             Candidate(
                 engine="yandex",
-                title=m.get("title", "") or "",
+                title=str(m.get("title") or ""),
                 link=link,
                 source=m.get("source", "") or "",
                 thumbnail=m.get("thumbnail", "") or "",
                 image=m.get("original", "") or "",
                 snippet=m.get("snippet", "") or "",
                 posted_at=m.get("posted_at", "") or "",
-                position=int(m.get("position", i + 1)),
+                position=_pos(m, i),
             )
         )
     return out, data
@@ -135,9 +157,9 @@ def google_social_by_name(api_key: str, name: str, country: str = "in", hl: str 
     for i, m in enumerate(data.get("organic_results", []) or []):
         link = m.get("link") or ""
         if link:
-            out.append(Candidate(engine="google_name", title=m.get("title", ""), link=link, source=m.get("displayed_link", "") or m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", snippet=m.get("snippet", ""), posted_at=m.get("date", "") or "", position=int(m.get("position", i + 1)), extra={"query": q}))
+            out.append(Candidate(engine="google_name", title=str(m.get("title") or ""), link=link, source=m.get("displayed_link", "") or m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", snippet=m.get("snippet", ""), posted_at=m.get("date", "") or "", position=_pos(m, i), extra={"query": q}))
     for i, m in enumerate(data.get("inline_images", []) or []):
-        link = m.get("link") or m.get("source") or ""
+        link = m.get("source") or m.get("link") or ""
         if link:
-            out.append(Candidate(engine="google_name_images", title=m.get("title", "") or "", link=link, source=m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", image=m.get("original", "") or "", position=i + 1, extra={"query": q}))
+            out.append(Candidate(engine="google_name_images", title=str(m.get("title") or ""), link=link, source=m.get("source", ""), thumbnail=m.get("thumbnail", "") or "", image=m.get("original", "") or "", position=i + 1, extra={"query": q}))
     return out, data

@@ -46,13 +46,16 @@ class Settings(BaseSettings):
     enable_eas: bool = Field(default=True, alias="ENABLE_EAS")
     eas_contract: str = Field(default="0xC2679fBD37d54388Ce493F1DB75320D236e1815e", alias="EAS_CONTRACT")
     eas_schema_registry: str = Field(default="0x0a7E2Ff54e76B8E6659aedc9103FB21c038050D0", alias="EAS_SCHEMA_REGISTRY")
-    eas_schema_uid: str = Field(default="", alias="EAS_SCHEMA_UID")
     eas_explorer: str = Field(default="https://sepolia.easscan.org", alias="EAS_EXPLORER")
     enable_ots: bool = Field(default=True, alias="ENABLE_OTS")
 
     # --- server -------------------------------------------------------------
     host: str = Field(default="127.0.0.1", alias="HOST")
     port: int = Field(default=8000, alias="PORT")
+
+    @property
+    def is_tester(self) -> bool:
+        return self.rpc_url.strip().lower() == "tester"
 
     @property
     def rpc_urls(self) -> list[str]:

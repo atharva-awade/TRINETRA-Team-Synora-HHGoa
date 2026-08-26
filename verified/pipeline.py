@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import secrets
 import time
 import uuid
@@ -33,8 +34,10 @@ Emit = Callable[[str, dict], None]
 
 
 def _b64(img: np.ndarray, max_side: int = 480, q: int = 85) -> str:
+    if img is None or img.size == 0:
+        return ""
     h, w = img.shape[:2]
-    s = min(1.0, max_side / max(h, w))
+    s = min(1.0, max_side / max(1, max(h, w)))
     if s < 1:
         img = cv2.resize(img, (int(w * s), int(h * s)))
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, q])
@@ -46,13 +49,7 @@ def ensure_salt(settings: Settings) -> bytes:
     if settings.commitment_salt:
         return bytes.fromhex(settings.commitment_salt[2:] if settings.commitment_salt.startswith("0x") else settings.commitment_salt)
     salt = secrets.token_bytes(32)
-    env = ROOT / ".env"
-    line = f"\nCOMMITMENT_SALT=0x{salt.hex()}\n"
-    try:
-        with open(env, "a", encoding="utf-8") as f:
-            f.write(line)
-    except OSError:
-        pass
+    _persist_env("COMMITMENT_SALT", "0x" + salt.hex())
     settings.commitment_salt = "0x" + salt.hex()
     return salt
 
@@ -91,7 +88,7 @@ class Pipeline:
         if not faces:
             self.emit("stage", {"stage": "face", "status": "failed", "message": "No face detected"})
             summary = {"run_id": run_id, "status": "no_face", "faces": 0}
-            (run_dir / "run.json").write_text(json.dumps(summary, indent=1))
+            (run_dir / "run.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
             return summary
         faces.sort(key=lambda f: (f.width * f.height, f.score), reverse=True)
         face = faces[0]
@@ -112,8 +109,8 @@ class Pipeline:
             "source": source,
         }
         np.save(run_dir / "query_embedding.npy", face.embedding)
-        (run_dir / "face.json").write_text(json.dumps(face_info, indent=1))
-        cv2.imwrite(str(run_dir / "query_annotated.jpg"), draw_faces(img, faces))
+        (run_dir / "face.json").write_text(json.dumps(face_info, indent=1), encoding="utf-8")
+        _write_jpeg(run_dir / "query_annotated.jpg", draw_faces(img, faces))
         self.emit(
             "face.detected",
             {
@@ -140,7 +137,8 @@ class Pipeline:
             "search": result.to_dict(),
             "elapsed_s": round(time.time() - t0, 2),
         }
-        (run_dir / "run.json").write_text(json.dumps(summary, indent=1, default=str))
+        _atomic_write(run_dir / "run.json", json.dumps(summary, indent=1, default=str).encode("utf-8"))
+        self.emit("scan.done", {"run_id": run_id, "status": status, "matches": [{k: v for k, v in m.items()} for m in summary["search"]["matches"]], "names": result.names})
         return summary
 
     # ---------------------------------------------------------------- phase 2
@@ -156,17 +154,27 @@ class Pipeline:
 
     def anchor(self, run_id: str, match_index: int | None = None) -> dict:
         run_dir = self._run_dir(run_id)
-        summary = json.loads((run_dir / "run.json").read_text())
-        matches = summary["search"]["matches"]
+        summary = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        if (run_dir / "anchor.json").exists():
+            raise RuntimeError(f"run {run_id} is already anchored (see anchor.json) - refusing to write a duplicate record")
+        matches = summary.get("search", {}).get("matches", [])
         if not matches:
             raise RuntimeError("no verified matches to anchor")
         idx = self.pick_best(matches) if match_index is None else match_index
+        if idx is None or not 0 <= idx < len(matches):
+            raise RuntimeError(f"match index {match_index} out of range (0..{len(matches) - 1})")
         m = matches[idx]
         self.emit("anchor.selected", {"index": idx, "match": {k: v for k, v in m.items() if k != "face_crop_b64"}})
 
         # --- evidence bundle --------------------------------------------------
         self.emit("stage", {"stage": "evidence", "status": "running"})
-        img_bytes = fetch_image(m["image_used"]) or fetch_image(m["thumbnail"]) or fetch_image(m["image"])
+        img_bytes, hashed_url = None, m["image_used"]
+        for cand_url in dict.fromkeys([m.get("image") or "", m["image_used"], m.get("thumbnail") or ""]):
+            if cand_url:
+                img_bytes = fetch_image(cand_url)
+                if img_bytes:
+                    hashed_url = cand_url
+                    break
         if img_bytes:
             content_hash = ev.sha256_hex(img_bytes)
             ext = ".png" if img_bytes[:8] == b"\x89PNG\r\n\x1a\n" else ".webp" if img_bytes[8:12] == b"WEBP" else ".jpg"
@@ -176,6 +184,23 @@ class Pipeline:
             content_hash = "0x" + m["image_sha256"]
             content_hash_source = "verification-time"
         face_json = summary["face"]
+        log = lambda msg: self.emit("chain.log", {"message": msg})  # noqa: E731
+        reg = Registry(self.s, log=log)
+        bal = reg.balance_eth()
+        self.emit("chain.wallet", {"address": reg.address, "balance_eth": round(bal, 6), "chain": self.s.chain_name, "rpc": reg.endpoint})
+        need = 0.004 if self.s.contract_address else 0.02  # deploy costs an order of magnitude more
+        if bal < need:
+            raise ChainError(
+                f"wallet {reg.address} holds {bal:.5f} ETH on {self.s.chain_name}; about {need} ETH is needed for this run "
+                f"({'anchor' if self.s.contract_address else 'deploy + anchor'}"
+                f"{' + EAS attestation' if self.s.enable_eas else ''}). Top it up from a faucet and retry."
+            )
+        deployed_now = reg.contract is None
+        reg.ensure_deployed()
+        if deployed_now:
+            self.s.contract_address = reg.contract.address
+            _persist_env("CONTRACT_ADDRESS", reg.contract.address)
+            self.emit("chain.deployed", {"contract": reg.contract.address, "explorer": reg.explorer_address(reg.contract.address)})
         bundle = ev.build_bundle(
             query={
                 "face_commitment": face_json["commitment"],
@@ -196,7 +221,8 @@ class Pipeline:
                 "author": m["metadata"].get("author", ""),
                 "text": (m["metadata"].get("text") or m["snippet"] or "")[:600],
                 "posted_at": m["metadata"].get("published") or m["posted_at"] or "",
-                "image_url": m["image_used"],
+                "image_url": hashed_url,
+                "image_urls": [u for u in dict.fromkeys([m.get("image") or "", m["image_used"], m.get("thumbnail") or ""]) if u],
                 "image_sha256": content_hash,
                 "image_sha256_source": content_hash_source,
                 "similarity": round(m["similarity"], 4),
@@ -214,12 +240,12 @@ class Pipeline:
                 "inferred_names": summary["search"]["names"],
                 "query_host": summary["search"].get("query_host"),
             },
-            chain={"name": self.s.chain_name, "chain_id": self.s.chain_id, "registry": self.s.contract_address or "deploy-on-anchor"},
+            chain={"name": self.s.chain_name, "chain_id": self.s.chain_id, "registry": reg.contract.address},
         )
         digest = ev.digest_bundle(bundle)
         canonical = ev.canonical_bytes(bundle)
         (run_dir / "bundle.json").write_bytes(canonical)
-        (run_dir / "bundle.pretty.json").write_text(json.dumps(bundle, indent=1, ensure_ascii=False))
+        (run_dir / "bundle.pretty.json").write_text(json.dumps(json.loads(canonical.decode("utf-8")), indent=1, ensure_ascii=False), encoding="utf-8")
         self.emit("evidence.built", {**digest, "bundle": bundle})
         self.emit("stage", {"stage": "evidence", "status": "done"})
 
@@ -240,18 +266,6 @@ class Pipeline:
 
         # --- on-chain anchor ----------------------------------------------------
         self.emit("stage", {"stage": "chain", "status": "running"})
-        log = lambda msg: self.emit("chain.log", {"message": msg})  # noqa: E731
-        reg = Registry(self.s, log=log)
-        bal = reg.balance_eth()
-        self.emit("chain.wallet", {"address": reg.address, "balance_eth": round(bal, 6), "chain": self.s.chain_name, "rpc": reg.w3.provider.endpoint_uri})
-        if bal <= 0:
-            raise ChainError(f"wallet {reg.address} has no funds on {self.s.chain_name}. Fund it from a faucet and retry.")
-        deployed_now = reg.contract is None
-        reg.ensure_deployed()
-        if deployed_now:
-            self.s.contract_address = reg.contract.address
-            _persist_env("CONTRACT_ADDRESS", reg.contract.address)
-            self.emit("chain.deployed", {"contract": reg.contract.address, "explorer": reg.explorer_address(reg.contract.address)})
         receipt = reg.anchor(
             record_hash=digest["record_hash"],
             face_commitment=face_json["commitment"],
@@ -267,7 +281,9 @@ class Pipeline:
         receipt["content_hash"] = content_hash
         receipt["face_commitment"] = face_json["commitment"]
         receipt["evidence_cid"] = evidence_cid
-        (run_dir / "anchor.json").write_text(json.dumps(receipt, indent=1))
+        (run_dir / "anchor.json").write_text(json.dumps(receipt, indent=1), encoding="utf-8")
+        summary.update({"status": "anchored", "anchor": receipt, "ipfs": ipfs_info, "selected_match": idx, "bundle_digest": digest})
+        _atomic_write(run_dir / "run.json", json.dumps(summary, indent=1, default=str).encode("utf-8"))
         self.emit("chain.anchored", receipt)
         self.emit("stage", {"stage": "chain", "status": "done"})
 
@@ -300,7 +316,7 @@ class Pipeline:
                 self.emit("stage", {"stage": "eas", "status": "failed", "message": str(e)[:200]})
         else:
             self.emit("stage", {"stage": "eas", "status": "skipped"})
-        (run_dir / "eas.json").write_text(json.dumps(eas_info, indent=1))
+        (run_dir / "eas.json").write_text(json.dumps(eas_info, indent=1), encoding="utf-8")
         self.emit("eas.done", eas_info)
 
         # --- OpenTimestamps (Bitcoin) -------------------------------------------
@@ -316,16 +332,23 @@ class Pipeline:
                 self.emit("stage", {"stage": "ots", "status": "failed", "message": str(e)[:200]})
         else:
             self.emit("stage", {"stage": "ots", "status": "skipped"})
-        (run_dir / "ots.json").write_text(json.dumps(ots_info, indent=1))
+        (run_dir / "ots.json").write_text(json.dumps(ots_info, indent=1), encoding="utf-8")
         self.emit("ots.done", ots_info)
+
+        summary.update({"eas": eas_info, "ots": ots_info})
+        _atomic_write(run_dir / "run.json", json.dumps(summary, indent=1, default=str).encode("utf-8"))
 
         # --- immediate independent re-verification --------------------------------
         self.emit("stage", {"stage": "verify", "status": "running"})
-        report = self.verify_run(run_id, refetch=True, registry=reg)
-        self.emit("stage", {"stage": "verify", "status": "done" if report["verdict"] == "VERIFIED" else "failed"})
+        try:
+            report = self.verify_run(run_id, refetch=True, registry=reg)
+            self.emit("stage", {"stage": "verify", "status": "done" if report["verdict"] == "VERIFIED" else "failed"})
+        except Exception as e:  # noqa: BLE001
+            report = {"verdict": "UNVERIFIED", "error": f"{type(e).__name__}: {e}", "checks": []}
+            self.emit("stage", {"stage": "verify", "status": "failed", "message": str(e)[:200]})
 
-        summary.update({"status": "anchored", "anchor": receipt, "ipfs": ipfs_info, "eas": eas_info, "ots": ots_info, "selected_match": idx, "bundle_digest": digest, "verification": report})
-        (run_dir / "run.json").write_text(json.dumps(summary, indent=1, default=str))
+        summary["verification"] = report
+        _atomic_write(run_dir / "run.json", json.dumps(summary, indent=1, default=str).encode("utf-8"))
         self.emit("run.done", {"run_id": run_id, "status": "anchored", "anchor": receipt, "eas": eas_info, "ipfs": ipfs_info, "ots": ots_info, "verification": report})
         return summary
 
@@ -346,7 +369,9 @@ class Pipeline:
         never from cached results, so tampering with any byte is detected.
         """
         run_dir = self._run_dir(run_id)
-        anchor = json.loads((run_dir / "anchor.json").read_text())
+        if not (run_dir / "anchor.json").exists():
+            raise RuntimeError(f"run {run_id} has not been anchored yet")
+        anchor = json.loads((run_dir / "anchor.json").read_text(encoding="utf-8"))
         raw = bundle_override if bundle_override is not None else (run_dir / "bundle.json").read_bytes()
         checks: list[dict] = []
 
@@ -366,7 +391,13 @@ class Pipeline:
             check("bundle.parse", False, f"bundle is not valid JSON: {e}")
             return {"verdict": "TAMPERED", "checks": checks}
         canonical = ev.canonical_bytes(bundle)
-        check("bundle.canonical", canonical == raw, "stored bytes are in canonical form" if canonical == raw else "stored bundle bytes differ from canonical serialisation")
+        stored = (run_dir / "bundle.json").read_bytes() if (run_dir / "bundle.json").exists() else b""
+        if bundle_override is None:
+            ok = canonical == raw
+            check("bundle.canonical", ok, "stored bundle bytes are in canonical form" if ok else "stored bundle bytes differ from canonical serialisation")
+        else:
+            ok = raw == stored
+            check("bundle.canonical", ok, "supplied bundle is byte-identical to the stored one" if ok else f"supplied bundle differs from the stored bundle by {abs(len(raw) - len(stored))} byte(s) — recomputing every hash from the supplied bytes", expected=f"{len(stored)} bytes stored", actual=f"{len(raw)} bytes supplied")
         rh = ev.record_hash(bundle)
         mr = ev.bundle_merkle_root(bundle)
 
@@ -424,15 +455,16 @@ class Pipeline:
                     check("live.image_hash", True, "live post image bytes are identical to the anchored hash - no content drift", expected=rec["contentHash"], actual=live_hash)
 
         # IPFS copy
-        ipfs_path = run_dir / "run.json"
         try:
-            ipfs_meta = json.loads(ipfs_path.read_text()).get("ipfs", {})
+            ipfs_meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8")).get("ipfs", {})
         except Exception:  # noqa: BLE001
             ipfs_meta = {}
-        check("ipfs.cid", ipfs_mod.cid_v1_raw(canonical) == ipfs_meta.get("cid_local", ipfs_mod.cid_v1_raw(canonical)), f"local CIDv1 {ipfs_mod.cid_v1_raw(canonical)}")
+        recomputed_cid = ipfs_mod.cid_v1_raw(canonical)
+        recorded_cid = ipfs_meta.get("cid_local")
+        check("ipfs.cid", bool(recorded_cid) and recomputed_cid == recorded_cid, f"recomputed CIDv1 matches the recorded one ({recomputed_cid})" if recorded_cid == recomputed_cid else "recomputed content id differs from the recorded CIDv1" if recorded_cid else "no CIDv1 recorded for this run", expected=recorded_cid, actual=recomputed_cid)
         if refetch and ipfs_meta.get("pinned") and ipfs_meta.get("cid"):
             try:
-                remote = ipfs_mod.fetch_ipfs(ipfs_meta["cid"], [self.s.pinata_gateway])
+                remote = ipfs_mod.fetch_ipfs(ipfs_meta["cid"], [self.s.pinata_gateway, *ipfs_mod.PUBLIC_GATEWAYS])
                 check("ipfs.pinned_copy", remote == canonical, "IPFS copy is byte-identical to the local bundle")
             except Exception as e:  # noqa: BLE001
                 check("ipfs.pinned_copy", False, f"could not fetch pinned copy: {str(e)[:120]}")
@@ -440,14 +472,14 @@ class Pipeline:
         # EAS
         eas_path = run_dir / "eas.json"
         if eas_path.exists():
-            eas_info = json.loads(eas_path.read_text())
+            eas_info = json.loads(eas_path.read_text(encoding="utf-8"))
             if eas_info.get("attestation_uid"):
                 try:
                     from .chain.eas import EAS
 
                     att = EAS(reg, self.s.eas_contract, self.s.eas_schema_registry, self.s.eas_explorer).get(eas_info["attestation_uid"])
                     ok = att["data"]["recordHash"] == rh and att["revocationTime"] == 0
-                    check("eas.attestation", ok, f"EAS attestation {eas_info['attestation_uid'][:14]}... carries the same recordHash and is not revoked")
+                    check("eas.attestation", ok, f"EAS attestation {eas_info['attestation_uid'][:14]}... " + ("carries the same recordHash and is not revoked" if ok else ("is REVOKED" if att["revocationTime"] else "carries a DIFFERENT recordHash")))
                 except Exception as e:  # noqa: BLE001
                     check("eas.attestation", False, f"EAS lookup failed: {str(e)[:120]}")
 
@@ -474,12 +506,29 @@ class Pipeline:
             "onchain_record": rec,
             "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
-        (run_dir / "verification.json").write_text(json.dumps(report, indent=1, default=str))
+        name = "verification.json" if bundle_override is None else "verification.tampered.json"
+        (run_dir / name).write_text(json.dumps(report, indent=1, default=str), encoding="utf-8")
         self.emit("verify.done", report)
         return report
 
 
+def _atomic_write(path: Path, data: bytes) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _write_jpeg(path: Path, img: np.ndarray) -> None:
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if ok:
+        path.write_bytes(buf.tobytes())
+
+
 def _persist_env(key: str, value: str) -> None:
+    """Persist a discovered value (contract address, salt) back into .env so the
+    next run reuses it. Set VERIFIED_NO_ENV_WRITE=1 to keep .env read-only."""
+    if os.environ.get("VERIFIED_NO_ENV_WRITE") == "1":
+        return
     env = ROOT / ".env"
     try:
         lines = env.read_text(encoding="utf-8").splitlines() if env.exists() else []

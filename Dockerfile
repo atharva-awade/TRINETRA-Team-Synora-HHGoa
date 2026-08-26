@@ -10,8 +10,10 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 
 # bake the face models into the image so the first run is instant
+COPY verified/__init__.py verified/__init__.py
+COPY verified/face/__init__.py verified/face/__init__.py
 COPY verified/face/models.py verified/face/models.py
-RUN python -c "from verified.face.models import ensure_models; ensure_models(print)" || true
+RUN python -c "from verified.face.models import ensure_models; ensure_models(print)"
 
 COPY . .
 EXPOSE 8000

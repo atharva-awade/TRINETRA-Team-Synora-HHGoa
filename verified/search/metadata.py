@@ -43,14 +43,30 @@ def _strip_html(s: str) -> str:
     return re.sub(r"\s+", " ", BeautifulSoup(s or "", "lxml").get_text(" ")).strip()
 
 
+MAX_HTML = 3 * 1024 * 1024
+
+
+def _get_html(client: httpx.Client, url: str, ua: str) -> str | None:
+    """Fetch an HTML page with a hard byte cap (pages can be enormous)."""
+    with client.stream("GET", url, headers={"User-Agent": ua, "Accept-Language": "en"}) as r:
+        if r.status_code >= 400 or "text/html" not in r.headers.get("content-type", ""):
+            return None
+        buf = bytearray()
+        for chunk in r.iter_bytes(65536):
+            buf.extend(chunk)
+            if len(buf) > MAX_HTML:
+                break
+        return buf.decode(r.encoding or "utf-8", errors="replace")
+
+
 def fetch_metadata(url: str, timeout: float = 12) -> dict:
-    from .verify import _ALLOW_LOCAL, _is_private_host
+    from .verify import _ALLOW_LOCAL, _is_private_host, safe_client
 
     meta: dict = {"url": url, "method": None}
     if not _ALLOW_LOCAL and _is_private_host(url):
         return meta
     ep = _oembed_endpoint(url)
-    with httpx.Client(follow_redirects=True, timeout=timeout, headers={"User-Agent": UA}) as c:
+    with safe_client(follow_redirects=True, timeout=timeout, headers={"User-Agent": UA}) as c:
         if ep:
             try:
                 r = c.get(ep, params={"url": url, "format": "json", "omit_script": "true"})
@@ -73,10 +89,10 @@ def fetch_metadata(url: str, timeout: float = 12) -> dict:
         # OpenGraph / HTML fallback (crawler UA gets richer tags on most socials)
         for ua in (BOT_UA, UA):
             try:
-                r = c.get(url, headers={"User-Agent": ua, "Accept-Language": "en"})
-                if r.status_code >= 400 or "text/html" not in r.headers.get("content-type", ""):
+                html = _get_html(c, url, ua)
+                if html is None:
                     continue
-                soup = BeautifulSoup(r.text, "lxml")
+                soup = BeautifulSoup(html, "lxml")
                 og = {}
                 for tag in soup.find_all("meta"):
                     k = tag.get("property") or tag.get("name")
@@ -97,7 +113,6 @@ def fetch_metadata(url: str, timeout: float = 12) -> dict:
                         "published": og.get("article:published_time") or og.get("og:updated_time") or og.get("datepublished"),
                         "author": og.get("article:author") or og.get("author") or og.get("twitter:creator"),
                         "canonical": og.get("og:url"),
-                        "final_url": str(r.url),
                     }
                 )
                 # JSON-LD often carries the author / date for Instagram, LinkedIn, YouTube

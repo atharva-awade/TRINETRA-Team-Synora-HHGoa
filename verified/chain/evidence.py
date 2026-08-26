@@ -16,8 +16,22 @@ from eth_utils import keccak
 BUNDLE_VERSION = "1.0"
 
 
+def _sanitise(obj: Any) -> Any:
+    """Make engine-supplied data safe for canonical serialisation (no NaN/inf,
+    no lone surrogates)."""
+    if isinstance(obj, dict):
+        return {str(k): _sanitise(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitise(v) for v in obj]
+    if isinstance(obj, float) and (obj != obj or obj in (float("inf"), float("-inf"))):
+        return None
+    if isinstance(obj, str):
+        return obj.encode("utf-8", "replace").decode("utf-8")
+    return obj
+
+
 def canonical_bytes(obj: Any) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(_sanitise(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
 def record_hash(bundle: dict) -> str:
@@ -28,22 +42,35 @@ def sha256_hex(data: bytes) -> str:
     return "0x" + hashlib.sha256(data).hexdigest()
 
 
+def _esc_key(k: str) -> str:
+    return k.replace("\\", "\\\\").replace(".", "\\.").replace("=", "\\u003d")
+
+
 def flatten(obj: Any, prefix: str = "") -> dict[str, str]:
-    """Flatten nested JSON into dotted-key -> canonical-string leaves."""
+    """Flatten nested JSON into dotted-key -> canonical-string leaves.
+    Dots inside keys are escaped so paths cannot collide; empty containers
+    become explicit leaves so their presence is committed too."""
+    if prefix == "":
+        obj = _sanitise(obj)
     out: dict[str, str] = {}
     if isinstance(obj, dict):
+        if not obj:
+            out[prefix[:-1] or "$"] = "{}"
         for k in sorted(obj):
-            out.update(flatten(obj[k], f"{prefix}{k}."))
+            out.update(flatten(obj[k], f"{prefix}{_esc_key(str(k))}."))
     elif isinstance(obj, list):
+        if not obj:
+            out[prefix[:-1] or "$"] = "[]"
         for i, v in enumerate(obj):
             out.update(flatten(v, f"{prefix}{i}."))
     else:
-        out[prefix[:-1]] = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        out[prefix[:-1]] = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return out
 
 
 def leaf_hash(key: str, value: str) -> bytes:
-    return keccak(f"{key}={value}".encode("utf-8"))
+    # 0x00 domain-separation prefix: a leaf pre-image can never be confused with an inner node
+    return keccak(b"\x00" + f"{key}={value}".encode("utf-8"))
 
 
 def _pair(a: bytes, b: bytes) -> bytes:

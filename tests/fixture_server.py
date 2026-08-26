@@ -92,6 +92,8 @@ class FixtureServer:
 
     def __exit__(self, *exc):
         self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=3)
 
 
 if __name__ == "__main__":

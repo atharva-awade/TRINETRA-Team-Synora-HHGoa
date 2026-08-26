@@ -8,14 +8,21 @@ name for the name-expansion step.
 from __future__ import annotations
 
 import base64
-import json
 import os
+import re
 
 import httpx
 
 from ..types import Candidate
 
 ENDPOINT = "https://vision.googleapis.com/v1/images:annotate"
+
+
+def _score(e: dict) -> float:
+    try:
+        return float(e.get("score") or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _auth(api_key: str, sa_path: str) -> tuple[dict, dict]:
@@ -45,7 +52,7 @@ def web_detection(image_bytes: bytes, api_key: str = "", sa_path: str = "", max_
             }
         ]
     }
-    r = httpx.post(ENDPOINT, params=params, headers=headers, content=json.dumps(body), timeout=90)
+    r = httpx.post(ENDPOINT, params=params, headers={**headers, "Content-Type": "application/json"}, json=body, timeout=90)
     if r.status_code != 200:
         raise RuntimeError(f"Google Vision HTTP {r.status_code}: {r.text[:300]}")
     data = r.json()
@@ -59,7 +66,7 @@ def web_detection(image_bytes: bytes, api_key: str = "", sa_path: str = "", max_
         out.append(
             Candidate(
                 engine="gvision_pages",
-                title=p.get("pageTitle", "") or "",
+                title=re.sub(r"<[^>]+>", "", str(p.get("pageTitle") or "")),
                 link=p.get("url", ""),
                 source="",
                 thumbnail=imgs[0] if imgs else "",
@@ -77,6 +84,6 @@ def web_detection(image_bytes: bytes, api_key: str = "", sa_path: str = "", max_
     for i, m in enumerate(wd.get("visuallySimilarImages", []) or []):
         if m.get("url"):
             out.append(Candidate(engine="gvision_similar", title="Visually similar image", link=m["url"], image=m["url"], thumbnail=m["url"], position=i + 1))
-    entities = [e.get("description", "") for e in sorted(wd.get("webEntities", []) or [], key=lambda e: -float(e.get("score", 0))) if e.get("description")]
-    labels = [l.get("label", "") for l in wd.get("bestGuessLabels", []) or [] if l.get("label")]
+    entities = [str(e.get("description") or "") for e in sorted(wd.get("webEntities", []) or [], key=lambda e: -_score(e)) if e.get("description")]
+    labels = [str(l.get("label") or "") for l in wd.get("bestGuessLabels", []) or [] if l.get("label")]
     return out, data, labels + entities

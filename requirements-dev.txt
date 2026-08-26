@@ -1,3 +1,5 @@
 -r requirements.txt
-pytest>=8
-playwright>=1.44
+pytest>=8,<9
+# the test-suite runs the real contract on an in-process chain (eth-tester);
+# install Foundry's `anvil` too if you prefer a real JSON-RPC node.
+web3[tester]>=7.0,<9

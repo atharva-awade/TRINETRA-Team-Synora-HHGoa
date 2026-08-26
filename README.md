@@ -33,8 +33,8 @@
 
 | layer | what | where to look |
 |---|---|---|
-| `VerifiedRegistry.sol` | our own registry contract (deployed by `verified deploy`) | Etherscan tx / contract links printed by the pipeline |
-| EAS attestation | standard attestation with schema `bytes32 recordHash, bytes32 faceCommitment, bytes32 contentHash, bytes32 merkleRoot, string uri, string platform, uint16 similarityBps, string evidenceCID, address registry, uint256 recordId` | [sepolia.easscan.org](https://sepolia.easscan.org) |
+| `VerifiedRegistry.sol` | our own registry contract (`python -m verified.cli deploy`) | Etherscan tx / contract links printed by the pipeline |
+| EAS attestation | standard attestation, schema `bytes32 recordHash,bytes32 faceCommitment,bytes32 contentHash,bytes32 merkleRoot,string uri,string platform,uint16 similarityBps,string evidenceCID,address registry,uint256 recordId` | [sepolia.easscan.org](https://sepolia.easscan.org) |
 | IPFS | the canonical evidence bundle (CIDv1) | Pinata gateway / any IPFS gateway |
 | Bitcoin (OpenTimestamps) | `sha256(bundle)` committed by public calendars into a Bitcoin block | `runs/<id>/ots/bundle.json.ots`, upgraded automatically on re-verify |
 
@@ -62,28 +62,41 @@ Windows one-liner: `run.bat` · macOS/Linux: `./run.sh` · Docker: `docker compo
 ### CLI
 
 ```bash
-python -m verified.cli run --image photo.jpg           # full pipeline on a file: scan -> search -> anchor -> re-verify
-python -m verified.cli run --image photo.jpg --no-anchor   # search only, pick a match later with `anchor --match N`
+python -m verified.cli models                          # download the face models (once)
+python -m verified.cli doctor                          # models, keys, RPC, wallet, contract
+python -m verified.cli wallet new                      # throwaway testnet wallet -> .env
+python -m verified.cli deploy                          # deploy VerifiedRegistry -> .env
+python -m verified.cli run --image photo.jpg           # full pipeline: scan -> search -> anchor -> re-verify
+python -m verified.cli run --image photo.jpg --no-anchor    # search only; anchor later
+python -m verified.cli anchor --run <run_id> --match 2 # anchor a specific verified match
 python -m verified.cli verify --run <run_id>           # independent re-verification of a stored run
 python -m verified.cli tamper --run <run_id>           # alter one field, watch every chain check fail
+python -m verified.cli serve                           # the local UI
 ```
+
+All commands are also available through the `Makefile` (`make setup`, `make doctor`, `make serve`,
+`make run IMG=photo.jpg`, `make verify RUN=<id>`, `make tamper RUN=<id>`, `make test`).
 
 Every run writes an auditable folder `runs/<run_id>/` with the query image, face JSON, **raw engine responses**, the canonical bundle, the matched image, anchor receipt, EAS/IPFS/OTS records and the verification report.
 
 ## The UI
 
-`verified serve` opens a local, single-page control room (no build step, no external services besides fonts):
+`python -m verified.cli serve` opens a local, single-page control room — a Goa sunrise that rises as
+the pipeline advances (the tide bar and the sun track the eight stages), with no build step and no
+external services besides the two web fonts:
 
 * live webcam with detection corners, landmarks, quality bars (sharpness / size / frontal) and the head-turn liveness challenge — the capture button unlocks only when quality and liveness pass;
 * engine chips lighting up as Google Lens / Yandex / Vision / Bluesky respond, a streaming grid of candidate faces with their similarity, greens for the same person, greys for rejected look-alikes;
 * inferred identity, verified matches with cosine gauges and platform badges, optional manual "Anchor this";
 * the on-chain receipt (record id, tx, contract, all hashes, IPFS CID, EAS link, QR code to Etherscan);
 * the independent re-verification checklist with a VERIFIED / TAMPERED verdict and a one-click **Tamper test**;
-* a ledger of previous anchors and a raw event log.
+* a ledger of previous anchors, a live ticker of pipeline events, and the raw event log.
+
+Keyboard: `space` captures. Drag-and-drop a photo anywhere on the page to load it.
 
 ## Design notes & innovations
 
-* **Verified, not similar.** Reverse-image search alone is noisy; we treat engine output as *candidates* and let the biometric model decide. Threshold bands (strong ≥ 0.50, match ≥ 0.40, weak ≥ 0.32) were calibrated on real photos: same person 0.75–0.97, different people ≈ 0.0–0.2.
+* **Verified, not similar.** Reverse-image search alone is noisy; we treat engine output as *candidates* and let the biometric model decide. Bands are relative to `MATCH_THRESHOLD` (default 0.40): *strong* ≥ threshold + 0.10, *match* ≥ threshold, *weak* ≥ threshold − 0.08, else rejected. Measured on the bundled sample photos: same person 0.75–0.97, different people −0.05 … 0.21 — a wide, safe margin.
 * **Multi-engine fan-out + identity expansion.** Google Lens (image-upload API, no public URL needed), Yandex (notoriously strong on faces), Google Reverse Image, Vision Web Detection (web entities give the name), and a second sweep by name across Instagram / X / LinkedIn / Facebook / Threads / TikTok / YouTube plus Bluesky's open API. Results are deduplicated by canonical URL and remember every engine that surfaced them.
 * **Privacy by construction.** The 512-d template is quantised and committed with `HMAC-SHA256(salt, template)`; only the commitment goes on-chain. The query crop is published to a 1-hour temporary host solely for the engines that need a URL (Google Lens gets a direct upload). Consent-first framing: the intended use is verifying *your own* likeness, detecting impersonation / deepfake reuse, and evidencing authorship.
 * **Selective disclosure.** Every bundle field is a Merkle leaf (`keccak256("key=value")`, sorted-pair hashing). `verifyLeaf` lets anyone prove e.g. the URL of the post to a third party without revealing the rest of the evidence — verified by the contract.
@@ -117,11 +130,21 @@ tests/                  offline end-to-end test (real models + real contract on 
 
 ```bash
 pip install -r requirements-dev.txt
-anvil &                                   # Foundry local node (or set ANVIL_RPC to a running one)
-python -m pytest tests -q
+python -m pytest tests -q          # 31 tests, no node, no API keys, no network
 ```
 
-The test runs the real face models and the real contract; only the SerpApi HTTP layer is replaced by a local fixture server whose "visual matches" point at the sample images. It asserts that the same person is matched (Instagram/Facebook fixtures), that different people are rejected, that the anchor verifies, and that a one-field tamper flips the verdict.
+Everything real runs: the ONNX face models, the compiled `VerifiedRegistry`, the canonical-JSON
+hashing and the Merkle proofs. Only two things are substituted — the chain is an **in-process
+eth-tester chain** (`RPC_URL=tester`, the same web3.py code path; export `ANVIL_RPC=http://127.0.0.1:8545`
+to use a real node instead) and the SerpApi HTTP layer is a **local fixture server** whose "visual
+matches" point at the bundled sample photos.
+
+The suite asserts, among other things: the same person is matched on the Instagram/Facebook fixtures
+and different people are rejected; the anchor verifies end to end; a one-field tamper flips the
+verdict to TAMPERED and every affected check to FAIL; Merkle proofs hold for all leaves of bundles
+of 1–19 fields and are accepted by the deployed contract; dotted keys cannot collide; the SSRF guard
+blocks 13 private-address notations; hostile engine payloads (nulls, wrong types) cannot crash a run;
+and the HTTP surface rejects path traversal and cross-origin writes.
 
 ## Known limitations
 
@@ -131,7 +154,9 @@ The test runs the real face models and the real contract; only the SerpApi HTTP 
 * **Biometric threshold.** 0.40 cosine on ArcFace is conservative; low-resolution thumbnails may push a true match into the "weak" band (0.32–0.40), visible in the UI but not anchored. Lower `MATCH_THRESHOLD` at your own risk.
 * **Liveness is a presentation check, not certified anti-spoofing.** The head-turn challenge defeats a static photo but not a replayed video.
 * **Face commitments bind a specific scan.** Two scans of the same person produce different templates, so the commitment proves *which template* a record was built from (verifiable by whoever holds the template + salt), not a searchable biometric index — by design.
-* **Testnet.** Sepolia ETH has no value and the network can be slow (~15–30 s per tx). OpenTimestamps proofs become Bitcoin-confirmed only after the calendar's next Bitcoin transaction (minutes to hours); until then they are "pending".
+* **Testnet.** Sepolia ETH has no value and the network can be slow (~15–30 s per tx). OpenTimestamps proofs become Bitcoin-confirmed only after the calendar's next Bitcoin transaction (minutes to hours); until then they are "pending" — `verify` upgrades the proof in place on every run.
+* **The local server trusts the local user.** It binds to `127.0.0.1` by default, guards state-changing endpoints with an `Origin` check and validates run ids, but it has no authentication: do not expose port 8000 to a network you do not trust (the Docker compose file sets `HOST=0.0.0.0` inside the container only).
+* **Not a surveillance tool.** There is no bulk mode, no watchlist, no database of faces — one scan, one anchor, and every artefact stays in `runs/`.
 * **Temporary image hosting.** For Yandex / Google Reverse Image the query face crop is uploaded to a 1-hour public host (litterbox / tmpfiles / 0x0). Set `IMAGE_HOST=none` to disable those engines and keep everything to direct uploads.
 
 ## Responsible use

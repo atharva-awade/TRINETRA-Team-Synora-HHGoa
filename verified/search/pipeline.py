@@ -39,7 +39,8 @@ def infer_names(matches: list[VerifiedMatch], hints: list[str]) -> list[str]:
     for m in matches:
         if m.band == "reject":
             continue
-        txt = f"{m.candidate.title} {m.candidate.snippet} {m.metadata.get('author', '')} {m.metadata.get('title', '')}"
+        meta = m.metadata if isinstance(m.metadata, dict) else {}
+        txt = f"{m.candidate.title} {m.candidate.snippet} {meta.get('author') or ''} {meta.get('title') or ''}"
         txt = re.sub(r"[|•·@#()\[\]\"“”:,]", " ", txt)
         for mt in re.finditer(r"\b([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,2})\b", txt):
             name = mt.group(1)
@@ -51,8 +52,10 @@ def infer_names(matches: list[VerifiedMatch], hints: list[str]) -> list[str]:
 
 
 def encode_jpeg_under(img: np.ndarray, max_bytes: int = 480_000, max_side: int = 1000) -> bytes:
+    if img is None or img.size == 0:
+        raise ValueError("empty image")
     h, w = img.shape[:2]
-    s = min(1.0, max_side / max(h, w))
+    s = min(1.0, max_side / max(1, max(h, w)))
     if s < 1:
         img = cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
     for q in (92, 85, 78, 70, 60, 50):
@@ -90,15 +93,30 @@ class SearchResult:
 
 
 def _prioritise(cands: list[Candidate], cap: int) -> list[Candidate]:
+    """Dedupe by (canonical url, image) and rank; every field is untrusted, so
+    a single malformed candidate must never abort the run."""
     seen: set[tuple[str, str]] = set()
     uniq: list[Candidate] = []
     for c in cands:
-        k = (c.key, c.image or c.thumbnail)
-        if k in seen or not (c.image or c.thumbnail):
+        try:
+            img = c.image or c.thumbnail
+            if not img or not c.link:
+                continue
+            k = (c.key, img)
+            if k in seen:
+                continue
+            seen.add(k)
+            uniq.append(c)
+        except Exception:  # noqa: BLE001
             continue
-        seen.add(k)
-        uniq.append(c)
-    uniq.sort(key=lambda c: (c.extra.get("exact", False), c.is_post, c.is_social, -c.position), reverse=True)
+
+    def rank(c: Candidate):
+        try:
+            return (bool(c.extra.get("exact")), c.is_post, c.is_social, -c.position)
+        except Exception:  # noqa: BLE001
+            return (False, False, False, 0)
+
+    uniq.sort(key=rank, reverse=True)
     return uniq[:cap]
 
 
@@ -120,6 +138,8 @@ def run_search(
 
     # ---- 1. query images -----------------------------------------------------
     crop = crop_face(img, face, margin=0.6)
+    if crop is None or crop.size == 0:  # bbox fully outside the frame
+        crop = img
     crop_bytes = encode_jpeg_under(crop)
     full_bytes = encode_jpeg_under(img, max_side=1400)
     (run_dir / "query_face.jpg").write_bytes(crop_bytes)
@@ -141,9 +161,12 @@ def run_search(
     jobs = []
 
     def _lens(kind: str, data: bytes):
+        # Google Lens is driven by SerpApi's direct image upload; the temporary
+        # public URL (when we have one) is passed as a documented fallback so a
+        # rejected image_id still produces results.
         image_id = serp.upload_image(data, settings.serpapi_key)
-        cands, raw = serp.google_lens(settings.serpapi_key, image_id=image_id, country=settings.search_country, hl=settings.search_lang)
-        (raw_dir / f"google_lens_{kind}.json").write_text(json.dumps(raw, indent=1))
+        cands, raw = serp.google_lens(settings.serpapi_key, image_id=image_id, url=public_url, country=settings.search_country, hl=settings.search_lang)
+        (raw_dir / f"google_lens_{kind}.json").write_text(json.dumps(raw, indent=1), encoding="utf-8")
         kg = raw.get("knowledge_graph")
         if isinstance(kg, dict) and kg.get("title"):
             name_hints.append(kg["title"])
@@ -155,17 +178,17 @@ def run_search(
 
     def _yandex():
         cands, raw = serp.yandex_reverse(settings.serpapi_key, public_url)
-        (raw_dir / "yandex.json").write_text(json.dumps(raw, indent=1))
+        (raw_dir / "yandex.json").write_text(json.dumps(raw, indent=1), encoding="utf-8")
         return "yandex", cands
 
     def _greverse():
         cands, raw = serp.google_reverse_image(settings.serpapi_key, public_url, hl=settings.search_lang)
-        (raw_dir / "google_reverse.json").write_text(json.dumps(raw, indent=1))
+        (raw_dir / "google_reverse.json").write_text(json.dumps(raw, indent=1), encoding="utf-8")
         return "google_reverse", cands
 
     def _vision():
         cands, raw, hints = gvision.web_detection(crop_bytes, settings.google_vision_api_key, settings.google_application_credentials)
-        (raw_dir / "google_vision.json").write_text(json.dumps(raw, indent=1))
+        (raw_dir / "google_vision.json").write_text(json.dumps(raw, indent=1), encoding="utf-8")
         name_hints.extend(hints)
         return "google_vision", cands
 
@@ -202,14 +225,15 @@ def run_search(
     shortlist = _prioritise(candidates, settings.max_candidates)
     emit("search.verify.start", {"candidates": len(candidates), "shortlist": len(shortlist)})
     t2 = time.time()
+    verified_before = 0
 
     def _progress(done, total, m):
-        payload = {"done": done, "total": total}
+        payload = {"done": done + verified_before, "total": total + verified_before}
         if m is not None:
-            payload.update({"similarity": round(m.similarity, 3), "band": m.band, "platform": m.platform, "link": m.candidate.link, "title": m.candidate.title[:90], "face_crop_b64": m.face_crop_b64, "engine": m.candidate.engine})
+            payload.update({"similarity": round(m.similarity, 3), "band": m.band, "platform": m.platform, "link": m.candidate.link, "title": (m.candidate.title or "")[:90], "face_crop_b64": m.face_crop_b64, "engine": m.candidate.engine})
         emit("search.verify.progress", payload)
 
-    verified = verify_all(engine, face.embedding, shortlist, on_progress=_progress)
+    verified = verify_all(engine, face.embedding, shortlist, on_progress=_progress, threshold=settings.match_threshold)
     timings["verify_s"] = round(time.time() - t2, 2)
 
     # ---- 4. identity inference + expansion -----------------------------------
@@ -227,7 +251,7 @@ def run_search(
             for fut, name in futs.items():
                 try:
                     cands, raw = fut.result()
-                    (raw_dir / f"{name}.json").write_text(json.dumps(raw, indent=1, default=str))
+                    (raw_dir / f"{name}.json").write_text(json.dumps(raw, indent=1, default=str), encoding="utf-8")
                     stats[name] = {"candidates": len(cands), "social": sum(c.is_social for c in cands), "posts": sum(c.is_post for c in cands)}
                     expansion.extend(cands)
                     emit("search.engine", {"engine": name, **stats[name], "query": names[0]})
@@ -236,10 +260,22 @@ def run_search(
                     errors.append(f"{name}: {e}")
                     emit("search.engine", {"engine": name, "error": str(e)})
         known = {c.key for c in shortlist}
+        # organic web results usually carry no thumbnail: pull og:image for social post/profile URLs
+        bare = [c for c in expansion if c.is_social and not (c.image or c.thumbnail) and c.key not in known][:12]
+        if bare:
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for c, meta in zip(bare, ex.map(lambda c: fetch_metadata(c.link, timeout=8), bare)):
+                    if meta.get("image"):
+                        c.image = meta["image"]
+                        c.thumbnail = meta["image"]
+                        c.extra["og"] = True
+                        if meta.get("author"):
+                            c.extra["author"] = meta["author"]
         expansion = [c for c in _prioritise(expansion, 40) if c.key not in known]
         if expansion:
+            verified_before = len(shortlist)
             emit("search.verify.start", {"candidates": len(expansion), "shortlist": len(expansion), "phase": "expansion"})
-            verified.extend(verify_all(engine, face.embedding, expansion, on_progress=_progress))
+            verified.extend(verify_all(engine, face.embedding, expansion, on_progress=_progress, threshold=settings.match_threshold))
 
     verified = dedupe(verified)
     matches = [m for m in verified if m.similarity >= settings.match_threshold]
@@ -261,6 +297,6 @@ def run_search(
     timings["total_s"] = round(time.time() - t0, 2)
 
     result = SearchResult(matches=matches, rejected=rejected, candidates_total=len(candidates), engines=stats, names=names, query_public_url=public_url, query_host=public_host, timings=timings, errors=errors)
-    (run_dir / "search_result.json").write_text(json.dumps(result.to_dict(), indent=1, default=str))
+    (run_dir / "search_result.json").write_text(json.dumps(result.to_dict(), indent=1, default=str), encoding="utf-8")
     emit("search.done", {"matches": len(matches), "rejected": len(rejected), "candidates": len(candidates), "names": names, "timings": timings, "top": [m.to_dict() | {"face_crop_b64": ""} for m in matches[:5]]})
     return result

@@ -4,7 +4,7 @@ Goal of the recording: show **face scan → real social post found → on-chain 
 
 ## Before you hit record
 
-1. `.env` has `SERPAPI_KEY`, `PRIVATE_KEY` (funded), `CONTRACT_ADDRESS` (run `python -m verified.cli deploy` once — you can also show the deploy in the recording), optionally `GOOGLE_VISION_API_KEY` and `PINATA_JWT`.
+1. `.env` has `SERPAPI_KEY`, `PRIVATE_KEY` (funded with **≥ 0.02 Sepolia ETH** — deploy + EAS schema + anchor + attest is four transactions), `CONTRACT_ADDRESS` (run `python -m verified.cli deploy` once — you can also show the deploy in the recording), optionally `GOOGLE_VISION_API_KEY` and `PINATA_JWT`.
 2. Run `python -m verified.cli doctor` — everything green.
 3. Pick the subject:
    * **Primary:** a teammate with public photos (public LinkedIn profile picture, public Instagram/X posts). Do one dry run *before* recording (it costs ~4 SerpApi searches) to confirm verified matches come back. If the teammate's footprint is too small, fall back to:
@@ -30,12 +30,19 @@ Goal of the recording: show **face scan → real social post found → on-chain 
 
 **4:20 — Tamper test.** Click **Tamper test**. One field (similarity) is changed by 0.0001 in the local bundle → record_hash, merkle_root, similarity, merkle_proof turn **FAIL**, verdict **TAMPERED**, with on-chain vs local hash shown. Click **Re-verify** → back to VERIFIED.
 
+**4:40 — Reload-proof (nice touch).** Refresh the page: the ledger at the bottom lists every anchor;
+click a run id to reopen it (the URL keeps `#run=<id>`), and Re-verify / Tamper test work on it again —
+useful if you navigate away to Etherscan mid-demo.
+
 **4:50 — CLI proof (optional but strong).** In the terminal:
 ```
 python -m verified.cli verify --run <run_id>
 python -m verified.cli tamper --run <run_id> --field match.url
 ```
-Show the exit code / verdict. Show `runs/<run_id>/` folder: `bundle.json`, `anchor.json`, `raw/google_lens_face.json` (the genuine API response), `ots/bundle.json.ots`.
+Show the exit code / verdict. Show the `runs/<run_id>/` folder: `bundle.json`, `anchor.json`,
+`raw/google_lens_face.json` (the genuine API response), `ots/bundle.json.ots`, `verification.json`.
+If you have 20 more seconds, `python -m pytest tests -q` runs 31 tests (real models, real contract on
+an in-process chain, no keys needed) — good evidence that the pipeline is not held together with tape.
 
 **5:20 — Close.** One line on privacy: "Nothing biometric is on-chain — only an HMAC commitment; the evidence is content-addressed and verifiable by anyone with the bundle."
 

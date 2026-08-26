@@ -6,7 +6,8 @@
     python -m verified.cli run --image face.jpg    # full pipeline (scan -> search -> anchor -> verify)
     python -m verified.cli verify --run <run_id>   # independent re-verification
     python -m verified.cli tamper --run <run_id>   # flip one byte, show verification failing
-    python -m verified.cli serve                   # premium local UI at http://127.0.0.1:8000
+    python -m verified.cli anchor --run <run_id> --match 2   # anchor a chosen match
+    python -m verified.cli serve                   # local UI at http://127.0.0.1:8000
 """
 from __future__ import annotations
 
@@ -18,10 +19,18 @@ from pathlib import Path
 import typer
 from rich import box
 from rich.console import Console
+from rich.markup import escape as esc
 from rich.panel import Panel
 from rich.table import Table
 
 from .config import ROOT, Settings
+
+if sys.platform == "win32":  # make rich's unicode glyphs safe on legacy code pages
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
 
 app = typer.Typer(add_completion=False, help="verified - face scan -> genuine social search -> blockchain anchor")
 wallet_app = typer.Typer(help="wallet helpers")
@@ -35,50 +44,50 @@ def _emit_console(event: str, payload: dict) -> None:
     if event == "stage":
         st = payload["status"]
         colour = {"running": "yellow", "done": "green", "failed": "red", "skipped": "dim"}.get(st, "white")
-        msg = f" - {payload.get('message')}" if payload.get("message") else ""
+        msg = f" - {esc(str(payload.get('message')))}" if payload.get("message") else ""
         console.print(f"[{colour}]• {STAGE_LABELS.get(payload['stage'], payload['stage'])}: {st}{msg}[/{colour}]")
     elif event == "face.detected":
         q = payload["quality"]
         console.print(f"  face {payload['bbox']} det={payload['det_score']} quality={q['overall']} age~{payload['age']} {payload['gender']} faces_in_frame={payload['faces_in_frame']}")
         console.print(f"  commitment {payload['commitment']}")
     elif event == "search.hosted":
-        console.print(f"  query crop hosted (ttl {payload['ttl']}) at {payload['url']} via {payload['host']}")
+        console.print(f"  query crop hosted (ttl {payload['ttl']}) at {esc(payload['url'])} via {payload['host']}")
     elif event == "search.fanout":
         console.print(f"  engines: {', '.join(payload['engines'])}")
     elif event == "search.engine":
         if "error" in payload:
-            console.print(f"  [red]{payload['engine']}: {payload['error'][:160]}[/red]")
+            console.print(f"  [red]{payload['engine']}: {esc(payload['error'][:160])}[/red]")
         else:
-            console.print(f"  {payload['engine']}: {payload['candidates']} candidates ({payload['social']} social, {payload['posts']} posts)" + (f"  q={payload['query']!r}" if payload.get("query") else ""))
+            console.print(f"  {payload['engine']}: {payload['candidates']} candidates ({payload['social']} social, {payload['posts']} posts)" + (f"  q={esc(repr(payload['query']))}" if payload.get("query") else ""))
     elif event == "search.verify.start":
         console.print(f"  biometric re-verification of {payload['shortlist']} candidates{' (expansion)' if payload.get('phase') else ''}...")
     elif event == "search.verify.progress" and payload.get("band") in ("strong", "match"):
-        console.print(f"    [green]✓ {payload['similarity']:.3f} {payload['band']:6s} {payload['platform'] or 'Web':12s} {payload['link'][:80]}[/green]")
+        console.print(f"    [green]✓ {payload['similarity']:.3f} {payload['band']:6s} {payload['platform'] or 'Web':12s} {esc(payload['link'][:80])}[/green]")
     elif event == "search.identity":
-        console.print(f"  inferred identity: {payload['names'] or '-'}")
+        console.print(f"  inferred identity: {esc(str(payload['names'] or '-'))}")
     elif event == "search.done":
         console.print(f"  [bold]{payload['matches']} verified matches[/bold] ({payload['rejected']} rejected, {payload['candidates']} candidates) in {payload['timings'].get('total_s')}s")
     elif event == "anchor.selected":
         m = payload["match"]
-        console.print(Panel(f"[bold]{m['platform']}[/bold]  sim={m['similarity']:.3f} ({m['band']})\n{m['title'][:100]}\n{m['canonical_link']}", title="selected match", box=box.ROUNDED))
+        console.print(Panel(f"[bold]{esc(m['platform'])}[/bold]  sim={m['similarity']:.3f} ({m['band']})\n{esc(m['title'][:100])}\n{esc(m['canonical_link'])}", title="selected match", box=box.ROUNDED))
     elif event == "evidence.built":
         console.print(f"  recordHash {payload['record_hash']}\n  merkleRoot {payload['merkle_root']}  ({payload['leaf_count']} leaves, {payload['canonical_size']} bytes)")
     elif event == "ipfs.done":
-        console.print(f"  CID {payload['cid_on_chain']}" + (f"  pinned → {payload['gateway_url']}" if payload.get("pinned") else "  (local CIDv1, not pinned)") + (f"  [red]{payload['error'][:100]}[/red]" if payload.get("error") else ""))
+        console.print(f"  CID {payload['cid_on_chain']}" + (f"  pinned → {esc(payload['gateway_url'])}" if payload.get("pinned") else "  (local CIDv1, not pinned)") + (f"  [red]{esc(payload['error'][:100])}[/red]" if payload.get("error") else ""))
     elif event == "chain.wallet":
         console.print(f"  wallet {payload['address']}  balance {payload['balance_eth']} ETH  ({payload['chain']})")
     elif event == "chain.log":
-        console.print(f"  [dim]{payload['message']}[/dim]")
+        console.print(f"  [dim]{esc(str(payload['message']))}[/dim]")
     elif event == "chain.deployed":
-        console.print(f"  [bold green]deployed VerifiedRegistry at {payload['contract']}[/bold green]  {payload['explorer']}")
+        console.print(f"  [bold green]deployed VerifiedRegistry at {payload['contract']}[/bold green]  {esc(payload['explorer'])}")
     elif event == "chain.anchored":
-        console.print(Panel(f"tx      {payload['tx_hash']}\nblock   {payload['block_number']}   record #{payload['record_id']}   gas {payload['gas_used']}\n{payload['explorer_tx']}", title=f"anchored on {payload['chain']}", box=box.ROUNDED, style="green"))
+        console.print(Panel(f"tx      {payload['tx_hash']}\nblock   {payload['block_number']}   record #{payload['record_id']}   gas {payload['gas_used']}\n{esc(payload['explorer_tx'])}", title=f"anchored on {esc(payload['chain'])}", box=box.ROUNDED, style="green"))
     elif event == "eas.done" and payload.get("attestation_uid"):
-        console.print(f"  EAS attestation {payload['attestation_uid']}\n  {payload['explorer_attestation']}")
+        console.print(f"  EAS attestation {payload['attestation_uid']}\n  {esc(str(payload['explorer_attestation']))}")
     elif event == "ots.done" and payload.get("calendars"):
         console.print(f"  OpenTimestamps: submitted to {len(payload['calendars'])} calendars → {payload['ots_file']} (Bitcoin confirmation pending)")
     elif event == "verify.check":
-        console.print(f"    {'[green]PASS[/green]' if payload['ok'] else '[red]FAIL[/red]'} {payload['name']:32s} {payload['detail'][:110]}")
+        console.print(f"    {'[green]PASS[/green]' if payload['ok'] else '[red]FAIL[/red]'} {esc(payload['name']):32s} {esc(payload['detail'][:110])}")
     elif event == "verify.done":
         colour = "green" if payload["verdict"] == "VERIFIED" else "red"
         console.print(f"[bold {colour}]VERDICT: {payload['verdict']}[/bold {colour}]")
@@ -98,7 +107,7 @@ def doctor():
     t.add_column("detail")
 
     def row(name, ok, detail, warn=False):
-        t.add_row(name, "[green]OK[/green]" if ok else ("[yellow]WARN[/yellow]" if warn else "[red]FAIL[/red]"), detail)
+        t.add_row(name, "[green]OK[/green]" if ok else ("[yellow]WARN[/yellow]" if warn else "[red]FAIL[/red]"), esc(str(detail)))
 
     from .face.models import REQUIRED, models_dir
 
@@ -122,7 +131,7 @@ def doctor():
         from .chain.registry import connect
 
         w3 = connect(s)
-        row("RPC", True, f"{w3.provider.endpoint_uri} chain={w3.eth.chain_id} block={w3.eth.block_number}")
+        row("RPC", True, f"{getattr(w3.provider, 'endpoint_uri', None) or type(w3.provider).__name__} chain={w3.eth.chain_id} block={w3.eth.block_number}")
         if s.private_key:
             from eth_account import Account
 
@@ -174,7 +183,7 @@ def wallet_show():
     from eth_account import Account
 
     if not s.private_key:
-        console.print("[red]PRIVATE_KEY not set[/red]")
+        console.print("[red]PRIVATE_KEY not set - run: python -m verified.cli wallet new[/red]")
         raise typer.Exit(1)
     acct = Account.from_key(s.private_key)
     console.print(acct.address)
@@ -212,7 +221,7 @@ def run(
         raise typer.Exit(2)
     _print_matches(summary["search"]["matches"])
     if no_anchor:
-        console.print(f"run saved: runs/{summary['run_id']}  (anchor later with: verified anchor --run {summary['run_id']} --match N)")
+        console.print(f"run saved: runs/{summary['run_id']}  (anchor later with: python -m verified.cli anchor --run {summary['run_id']} --match N)")
         return
     summary = p.anchor(summary["run_id"], match)
     console.print(f"[bold]done in {time.time() - t0:.1f}s → runs/{summary['run_id']}[/bold]")
@@ -243,18 +252,22 @@ def tamper(run: str = typer.Option(..., help="run id"), field: str = typer.Optio
 
     s = _settings()
     run_dir = s.runs_dir / run
-    bundle = json.loads((run_dir / "bundle.json").read_bytes())
+    bundle = json.loads((run_dir / "bundle.json").read_bytes().decode("utf-8"))
     node = bundle
     parts = field.split(".")
-    for k in parts[:-1]:
-        node = node[k]
-    old = node[parts[-1]]
+    try:
+        for k in parts[:-1]:
+            node = node[k]
+        old = node[parts[-1]]
+    except (KeyError, TypeError):
+        console.print(f"[red]unknown bundle field {esc(field)}[/red]")
+        raise typer.Exit(2)
     node[parts[-1]] = (old + 0.0001) if isinstance(old, (int, float)) and not isinstance(old, bool) else (str(old) + "x")
     from .chain.evidence import canonical_bytes
 
     tampered = canonical_bytes(bundle)
     (run_dir / "bundle.tampered.json").write_bytes(tampered)
-    console.print(f"[yellow]altered {field}: {old!r} → {node[parts[-1]]!r}  (saved bundle.tampered.json)[/yellow]")
+    console.print(f"[yellow]altered {esc(field)}: {esc(repr(old))} → {esc(repr(node[parts[-1]]))}  (saved bundle.tampered.json)[/yellow]")
     p = Pipeline(s, emit=_emit_console)
     rep = p.verify_run(run, refetch=False, bundle_override=tampered)
     raise typer.Exit(0 if rep["verdict"] == "TAMPERED" else 1)
@@ -279,7 +292,7 @@ def _print_matches(matches: list[dict]) -> None:
     t.add_column("engines")
     t.add_column("link")
     for i, m in enumerate(matches[:15]):
-        t.add_row(str(i), f"{m['similarity']:.3f}", m["band"], m["platform"], "✓" if m["is_post"] else "", ",".join(e.replace("google_", "g_") for e in m["engines"]), m["link"][:70])
+        t.add_row(str(i), f"{m['similarity']:.3f}", m["band"], esc(m["platform"]), "✓" if m["is_post"] else "", ",".join(e.replace("google_", "g_") for e in m["engines"]), esc(m["link"][:70]))
     console.print(t)
 
 

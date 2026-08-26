@@ -13,6 +13,7 @@ from web3.exceptions import Web3Exception
 from ..config import Settings
 
 ARTIFACT = Path(__file__).with_name("artifacts") / "VerifiedRegistry.json"
+_TESTER_W3: Web3 | None = None
 
 
 class ChainError(RuntimeError):
@@ -20,11 +21,23 @@ class ChainError(RuntimeError):
 
 
 def load_artifact() -> dict:
-    return json.loads(ARTIFACT.read_text())
+    return json.loads(ARTIFACT.read_text(encoding="utf-8"))
 
 
 def connect(settings: Settings, log=lambda *_: None) -> Web3:
-    """Connect to the first responsive RPC endpoint on the configured chain."""
+    """Connect to the first responsive RPC endpoint on the configured chain.
+
+    `RPC_URL=tester` spins up an in-process eth-tester chain, which is what the
+    offline test-suite uses - the same contract, the same web3.py code path, no
+    external node required."""
+    if settings.rpc_url.strip().lower() == "tester":
+        global _TESTER_W3
+        if _TESTER_W3 is None:  # one shared chain per process, or each client would see an empty one
+            from web3 import EthereumTesterProvider
+
+            _TESTER_W3 = Web3(EthereumTesterProvider())
+        log(f"in-process eth-tester chain (chain {_TESTER_W3.eth.chain_id})")
+        return _TESTER_W3
     errors = []
     for url in settings.rpc_urls:
         try:
@@ -57,9 +70,23 @@ class Registry:
         self.w3 = w3 or connect(settings, log)
         self.art = load_artifact()
         self.account = Account.from_key(settings.private_key) if settings.private_key else None
+        self._next_nonce: int | None = None
+        if self.account is not None and getattr(settings, "is_tester", False):
+            self._fund_on_tester()
         self.contract = None
         if settings.contract_address:
             self.contract = self.w3.eth.contract(address=Web3.to_checksum_address(settings.contract_address), abi=self.art["abi"])
+
+    def _fund_on_tester(self) -> None:
+        """The in-process test chain funds its own accounts; move some ether to
+        ours so the exact production code path (sign -> send raw tx) is used."""
+        try:
+            if self.w3.eth.get_balance(self.account.address) > self.w3.to_wei(1, "ether"):
+                return
+            faucet = self.w3.eth.accounts[0]
+            self.w3.eth.send_transaction({"from": faucet, "to": self.account.address, "value": self.w3.to_wei(100, "ether")})
+        except Exception as e:  # noqa: BLE001
+            self.log(f"tester funding skipped: {e}")
 
     # ------------------------------------------------------------- utilities
     @property
@@ -71,6 +98,10 @@ class Registry:
             return 0.0
         return float(self.w3.from_wei(self.w3.eth.get_balance(self.account.address), "ether"))
 
+    @property
+    def endpoint(self) -> str:
+        return getattr(self.w3.provider, "endpoint_uri", None) or type(self.w3.provider).__name__
+
     def explorer_tx(self, tx_hash: str) -> str:
         return f"{self.s.explorer_url.rstrip('/')}/tx/{tx_hash}" if self.s.explorer_url else tx_hash
 
@@ -80,9 +111,12 @@ class Registry:
     def _send(self, fn_tx, value: int = 0, gas_margin: float = 1.25) -> TxResult:
         if not self.account:
             raise ChainError("PRIVATE_KEY not set (run: python -m verified.cli wallet new) - read-only mode")
+        nonce = self.w3.eth.get_transaction_count(self.account.address, "pending")
+        if self._next_nonce is not None and self._next_nonce > nonce:
+            nonce = self._next_nonce  # a lagging load-balanced RPC node may not know our last tx yet
         base = {
             "from": self.account.address,
-            "nonce": self.w3.eth.get_transaction_count(self.account.address, "pending"),
+            "nonce": nonce,
             "chainId": self.w3.eth.chain_id,
             "value": value,
         }
@@ -101,16 +135,27 @@ class Registry:
             base.update({"maxPriorityFeePerGas": tip, "maxFeePerGas": base_fee * 2 + tip})
         else:
             base["gasPrice"] = self.w3.eth.gas_price
-        tx = fn_tx.build_transaction(base)
         try:
+            tx = fn_tx.build_transaction(base)
             est = self.w3.eth.estimate_gas(tx)
         except Web3Exception as e:
-            raise ChainError(f"gas estimation failed (does the wallet have Sepolia ETH? / revert?): {e}") from e
+            raise ChainError(f"transaction simulation failed (insufficient funds? revert?): {str(e)[:200]}") from e
         tx["gas"] = int(est * gas_margin)
         signed = self.account.sign_transaction(tx)
         raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
-        tx_hash = self.w3.eth.send_raw_transaction(raw)
-        self.log(f"tx sent {tx_hash.hex()} - waiting for inclusion...")
+        try:
+            tx_hash = self.w3.eth.send_raw_transaction(raw)
+        except Exception as e:  # noqa: BLE001
+            msg = str(e).lower()
+            if "nonce" in msg or "underpriced" in msg or "already known" in msg:
+                tx["nonce"] = self.w3.eth.get_transaction_count(self.account.address, "pending")
+                signed = self.account.sign_transaction(tx)
+                raw = getattr(signed, "raw_transaction", None) or getattr(signed, "rawTransaction")
+                tx_hash = self.w3.eth.send_raw_transaction(raw)
+            else:
+                raise ChainError(f"send failed: {str(e)[:200]}") from e
+        self._next_nonce = tx["nonce"] + 1
+        self.log(f"tx sent 0x{tx_hash.hex().removeprefix('0x')} - waiting for inclusion...")
         receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=240, poll_latency=2)
         if receipt["status"] != 1:
             raise ChainError(f"transaction reverted: {tx_hash.hex()}")
@@ -152,7 +197,7 @@ class Registry:
         )
         res = self._send(fn)
         events = self.contract.events.Anchored().process_receipt(_receipt_like(res))
-        rec_id = int(events[0]["args"]["id"]) if events else None
+        rec_id = int(events[0]["args"]["id"]) if events else int(self.verify_hash(record_hash)["record_id"])
         block = self.w3.eth.get_block(res.block_number)
         return {
             "tx_hash": res.tx_hash,

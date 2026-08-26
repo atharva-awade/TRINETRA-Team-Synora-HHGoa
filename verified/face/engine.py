@@ -316,12 +316,13 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / ((np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9))
 
 
-def similarity_band(sim: float) -> str:
-    if sim >= THRESH_STRONG:
+def similarity_band(sim: float, threshold: float = THRESH_MATCH) -> str:
+    """Band relative to the configured match threshold (default 0.40)."""
+    if sim >= threshold + 0.10:
         return "strong"
-    if sim >= THRESH_MATCH:
+    if sim >= threshold:
         return "match"
-    if sim >= THRESH_WEAK:
+    if sim >= threshold - 0.08:
         return "weak"
     return "reject"
 

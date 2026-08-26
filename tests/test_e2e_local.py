@@ -1,9 +1,10 @@
-"""Offline end-to-end test: real face models + real contract on a local Anvil
-chain, with the SerpApi HTTP layer replaced by the fixture server.
+"""Offline end-to-end test: the real face models and the real Solidity contract
+on an in-process chain, with only the SerpApi HTTP layer replaced by a local
+fixture server whose "visual matches" point at the bundled sample photos.
 
-Run:  ANVIL_RPC=http://127.0.0.1:8545 python -m pytest tests/ -q
-(or simply `python tests/test_e2e_local.py`, which starts anvil itself if the
-binary is on PATH)."""
+Run:  python -m pytest tests -q          (needs no node, no keys, no network)
+      ANVIL_RPC=http://127.0.0.1:8545 python -m pytest tests -q   (real node)
+"""
 from __future__ import annotations
 
 import json
@@ -22,22 +23,23 @@ sys.path.insert(0, str(ROOT / "tests"))
 ANVIL_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 
-def _anvil():
+def _chain():
+    """Prefer an explicit node, then a local anvil binary, else eth-tester."""
     url = os.environ.get("ANVIL_RPC")
     if url:
-        return url, None
+        return url, "31337", None
     exe = shutil.which("anvil") or os.environ.get("ANVIL_BIN")
-    if not exe:
-        raise RuntimeError("anvil not found - set ANVIL_RPC or ANVIL_BIN")
-    proc = subprocess.Popen([exe, "--port", "8546", "--silent", "--chain-id", "31337"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(1.5)
-    return "http://127.0.0.1:8546", proc
+    if exe:
+        proc = subprocess.Popen([exe, "--port", "8546", "--silent", "--chain-id", "31337"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.5)
+        return "http://127.0.0.1:8546", "31337", proc
+    return "tester", "0", None
 
 
 def test_pipeline_end_to_end():
     from fixture_server import FixtureServer
 
-    rpc, proc = _anvil()
+    rpc, chain_id, proc = _chain()
     runs = Path(tempfile.mkdtemp(prefix="verified-runs-"))
     try:
         with FixtureServer(8766) as fx:
@@ -47,8 +49,8 @@ def test_pipeline_end_to_end():
                     "SERPAPI_KEY": "fixture",
                     "RPC_URL": rpc,
                     "RPC_FALLBACKS": "",
-                    "CHAIN_ID": "31337",
-                    "CHAIN_NAME": "Anvil local",
+                    "CHAIN_ID": chain_id,
+                    "CHAIN_NAME": "local test chain",
                     "EXPLORER_URL": "",
                     "PRIVATE_KEY": ANVIL_KEY,
                     "CONTRACT_ADDRESS": "",
@@ -63,6 +65,7 @@ def test_pipeline_end_to_end():
                     "PINATA_JWT": "",
                     "RUNS_DIR": str(runs),
                     "ALLOW_LOCAL_FETCH": "1",
+                    "VERIFIED_NO_ENV_WRITE": "1",
                 }
             )
             # engines module reads SERPAPI_BASE at import time

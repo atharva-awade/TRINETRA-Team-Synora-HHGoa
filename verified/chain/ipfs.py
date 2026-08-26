@@ -70,8 +70,11 @@ def pin_bytes(data: bytes, filename: str, jwt: str, content_type: str = "applica
     raise RuntimeError(f"Pinata pin failed ({err_v3}; legacy HTTP {r.status_code}: {r.text[:200]})")
 
 
+PUBLIC_GATEWAYS = ["https://ipfs.io/ipfs", "https://dweb.link/ipfs", "https://cloudflare-ipfs.com/ipfs", "https://gateway.pinata.cloud/ipfs"]
+
+
 def fetch_ipfs(cid: str, gateways: list[str] | None = None, timeout: float = 30) -> bytes:
-    gateways = gateways or ["https://gateway.pinata.cloud/ipfs", "https://ipfs.io/ipfs", "https://cloudflare-ipfs.com/ipfs", "https://dweb.link/ipfs"]
+    gateways = list(dict.fromkeys(gateways or PUBLIC_GATEWAYS))
     errors = []
     for g in gateways:
         try:

@@ -112,7 +112,11 @@ contract VerifiedRegistry {
         return _idsByContent[contentHash];
     }
 
-    /// @notice On-chain Merkle proof check for a single evidence field (sorted-pair hashing).
+    /// @notice On-chain Merkle proof check for a single evidence leaf (sorted-pair hashing).
+    /// @dev The caller MUST derive `leaf` itself as keccak256(0x00 ++ "<dotted.key>=<canonical json value>")
+    ///      - the contract cannot tell a leaf pre-image from an internal node, so a verifier that
+    ///      accepts a leaf value from an untrusted party (instead of hashing the field itself)
+    ///      proves nothing. `verified verify` always recomputes the leaf locally.
     function verifyLeaf(uint256 id, bytes32 leaf, bytes32[] calldata proof) external view returns (bool) {
         if (id >= _records.length) revert UnknownRecord();
         bytes32 h = leaf;
