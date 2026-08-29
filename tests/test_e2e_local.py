@@ -41,6 +41,7 @@ def test_pipeline_end_to_end():
 
     rpc, chain_id, proc = _chain()
     runs = Path(tempfile.mkdtemp(prefix="verified-runs-"))
+    saved_env = dict(os.environ)
     try:
         with FixtureServer(8766) as fx:
             os.environ.update(
@@ -112,6 +113,8 @@ def test_pipeline_end_to_end():
         if proc:
             proc.terminate()
         shutil.rmtree(runs, ignore_errors=True)
+        os.environ.clear()  # this test drives the app through the environment; leave none of it behind
+        os.environ.update(saved_env)
 
 
 if __name__ == "__main__":

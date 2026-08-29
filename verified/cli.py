@@ -109,6 +109,11 @@ def doctor():
     def row(name, ok, detail, warn=False):
         t.add_row(name, "[green]OK[/green]" if ok else ("[yellow]WARN[/yellow]" if warn else "[red]FAIL[/red]"), esc(str(detail)))
 
+    from .chain.presets import PRESETS
+
+    if s.chain:
+        row("chain preset", s.chain in PRESETS, f"CHAIN={s.chain} -> {s.chain_name} (id {s.chain_id})" if s.chain in PRESETS else f"unknown preset {s.chain!r}; known: {', '.join(sorted(PRESETS))}")
+
     from .face.models import REQUIRED, models_dir
 
     md = models_dir()
@@ -137,7 +142,9 @@ def doctor():
 
             acct = Account.from_key(s.private_key)
             bal = float(w3.from_wei(w3.eth.get_balance(acct.address), "ether"))
-            row("wallet", bal > 0.002, f"{acct.address}  {bal:.5f} ETH" + ("" if bal > 0.002 else "  ← fund via faucet"))
+            need = 0.004 if s.contract_address else 0.02
+            faucet = PRESETS.get(s.chain or "sepolia", {}).get("faucet", "")
+            row("wallet", bal >= need, f"{acct.address}  {bal:.5f} ETH" + ("" if bal >= need else f"  <- needs ~{need} ETH for this run: {faucet}"))
         else:
             row("wallet", False, "PRIVATE_KEY missing - run: python -m verified.cli wallet new")
         if s.contract_address:
@@ -166,6 +173,9 @@ def wallet_new(write_env: bool = typer.Option(True, help="append PRIVATE_KEY to 
 
     addr, key = new_wallet()
     console.print(f"address     {addr}\nprivate key {key}")
+    from .chain.presets import PRESETS as _P
+
+    faucet = _P.get(_settings().chain or "sepolia", {}).get("faucet", "")
     if write_env:
         if _settings().private_key:
             console.print("[yellow].env already has a PRIVATE_KEY - not overwriting (pass --no-write-env to silence)[/yellow]")
@@ -174,7 +184,7 @@ def wallet_new(write_env: bool = typer.Option(True, help="append PRIVATE_KEY to 
 
             _persist_env("PRIVATE_KEY", key)
             console.print(f"[green]PRIVATE_KEY written to {ROOT / '.env'}[/green]")
-    console.print("Fund it: https://cloud.google.com/application/web3/faucet/ethereum/sepolia")
+    console.print(f"Fund it (needs ~0.02 ETH for deploy + anchor + attestation): {faucet}")
 
 
 @wallet_app.command("show")
@@ -271,6 +281,28 @@ def tamper(run: str = typer.Option(..., help="run id"), field: str = typer.Optio
     p = Pipeline(s, emit=_emit_console)
     rep = p.verify_run(run, refetch=False, bundle_override=tampered)
     raise typer.Exit(0 if rep["verdict"] == "TAMPERED" else 1)
+
+
+@app.command("verify-bundle")
+def verify_bundle(
+    bundle: Path = typer.Option(..., exists=True, help="evidence bundle JSON"),
+    contract: str = typer.Option(..., help="VerifiedRegistry address"),
+    record: int = typer.Option(..., help="on-chain record id"),
+    chain: str = typer.Option("sepolia", help="chain preset"),
+    rpc: str = typer.Option("", help="override the preset RPC URL"),
+    field: str = typer.Option("match.url", help="field to prove on-chain"),
+):
+    """Verify a bundle against the chain with nothing else - no runs/ folder, no wallet.
+
+    This is the third-party path: hand someone the bundle plus the contract
+    address and record id and they can check it themselves."""
+    import subprocess
+
+    script = ROOT / "verify_standalone.py"
+    cmd = [sys.executable, str(script), "--bundle", str(bundle), "--contract", contract, "--record", str(record), "--chain", chain, "--field", field]
+    if rpc:
+        cmd += ["--rpc", rpc]
+    raise typer.Exit(subprocess.call(cmd))
 
 
 @app.command()

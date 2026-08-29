@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     runs_dir: Path = Field(default=ROOT / "runs", alias="RUNS_DIR")
 
     # --- blockchain ---------------------------------------------------------
+    chain: str = Field(default="", alias="CHAIN")  # sepolia|base-sepolia|optimism-sepolia|polygon-amoy|arbitrum-sepolia|anvil|tester
     rpc_url: str = Field(default="https://ethereum-sepolia-rpc.publicnode.com", alias="RPC_URL")
     rpc_fallbacks: str = Field(
         default="https://sepolia.drpc.org,https://rpc.sepolia.org,https://1rpc.io/sepolia",
@@ -66,6 +67,13 @@ class Settings(BaseSettings):
                 seen.add(u)
                 out.append(u)
         return out
+
+
+    def model_post_init(self, _ctx) -> None:
+        if self.chain:
+            from .chain.presets import apply_preset
+
+            apply_preset(self, self.chain)
 
 
 settings = Settings()

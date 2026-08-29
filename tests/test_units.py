@@ -155,3 +155,46 @@ def test_http_surface_rejects_traversal_and_cross_origin(tmp_path, monkeypatch):
         r = client.post("/api/verify/20260101-000000-abcdef", headers={"Origin": "https://evil.example"}, data={})
         assert r.status_code == 403
         assert client.get("/").status_code == 200
+
+
+# ----------------------------------------------------------------- presets
+def test_chain_presets_are_complete_and_applied(monkeypatch):
+    from verified.chain.presets import PRESETS, apply_preset
+    from verified.config import Settings
+
+    # a preset must not fight explicit env vars, so clear them for this test
+    for var in ("CHAIN_ID", "CHAIN_NAME", "RPC_URL", "RPC_FALLBACKS", "EXPLORER_URL", "EAS_CONTRACT", "EAS_SCHEMA_REGISTRY", "EAS_EXPLORER", "ENABLE_EAS", "CHAIN"):
+        monkeypatch.delenv(var, raising=False)
+
+    required = {"chain_name", "chain_id", "rpc_url", "rpc_fallbacks", "explorer_url", "eas_contract", "eas_schema_registry", "eas_explorer", "faucet"}
+    for key, preset in PRESETS.items():
+        assert set(preset) == required, key
+        assert isinstance(preset["chain_id"], int)
+        if preset["eas_contract"]:
+            assert preset["eas_contract"].startswith("0x") and len(preset["eas_contract"]) == 42, key
+
+    s = Settings(_env_file=None)
+    apply_preset(s, "base-sepolia")
+    assert s.chain_id == 84532 and "base.org" in s.rpc_url and s.enable_eas
+    apply_preset(s, "anvil")
+    assert s.chain_id == 31337 and s.enable_eas is False  # no EAS deployment on a local chain
+
+    with pytest.raises(KeyError):
+        apply_preset(s, "mainnet-of-nowhere")
+
+    # an explicit env var must win over the preset
+    monkeypatch.setenv("RPC_URL", "https://my-own-node.example")
+    s2 = Settings(_env_file=None)
+    apply_preset(s2, "sepolia")
+    assert s2.rpc_url == "https://my-own-node.example" and s2.chain_id == 11155111
+
+
+def test_standalone_verifier_is_runnable():
+    """The third-party verifier must work from the repo alone."""
+    import subprocess
+    import sys as _sys
+
+    r = subprocess.run([_sys.executable, str(ROOT / "verify_standalone.py"), "--help"], capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0
+    for flag in ("--bundle", "--contract", "--record", "--chain", "--field"):
+        assert flag in r.stdout

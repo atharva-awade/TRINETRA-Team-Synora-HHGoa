@@ -38,7 +38,21 @@
 | IPFS | the canonical evidence bundle (CIDv1) | Pinata gateway / any IPFS gateway |
 | Bitcoin (OpenTimestamps) | `sha256(bundle)` committed by public calendars into a Bitcoin block | `runs/<id>/ots/bundle.json.ots`, upgraded automatically on re-verify |
 
-Any EVM chain works by changing `RPC_URL / CHAIN_ID / EXPLORER_URL` (and the EAS addresses); the offline test-suite runs the exact same code against a local Anvil node.
+**Multichain by one line.** `CHAIN=` in `.env` switches the whole anchoring layer — RPC, chain id,
+explorer and the official EAS addresses for that chain:
+
+| `CHAIN=` | chain | EAS | faucet |
+|---|---|---|---|
+| `sepolia` (default) | Ethereum Sepolia · 11155111 | ✅ | [Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
+| `base-sepolia` | Base Sepolia · 84532 | ✅ | [Coinbase CDP](https://portal.cdp.coinbase.com/products/faucet) |
+| `optimism-sepolia` | Optimism Sepolia · 11155420 | ✅ | [Optimism console](https://console.optimism.io/faucet) |
+| `polygon-amoy` | Polygon Amoy · 80002 | ✅ | [Polygon faucet](https://faucet.polygon.technology/) |
+| `arbitrum-sepolia` | Arbitrum Sepolia · 421614 | ✅ | [Alchemy](https://www.alchemy.com/faucets/arbitrum-sepolia) |
+| `anvil` | local Foundry node · 31337 | – | funded automatically |
+| `tester` | in-process eth-tester chain | – | funded automatically |
+
+Anything you set explicitly (`RPC_URL`, `CHAIN_ID`, …) still wins over the preset, so any other
+EVM network works too. The test-suite runs the exact same contract and code path on the `tester` chain.
 
 ## Quick start
 
@@ -78,6 +92,21 @@ All commands are also available through the `Makefile` (`make setup`, `make doct
 `make run IMG=photo.jpg`, `make verify RUN=<id>`, `make tamper RUN=<id>`, `make test`).
 
 Every run writes an auditable folder `runs/<run_id>/` with the query image, face JSON, **raw engine responses**, the canonical bundle, the matched image, anchor receipt, EAS/IPFS/OTS records and the verification report.
+
+### Anyone can verify it — without this repo's data, and without trusting us
+
+Hand a third party three things from the receipt (the bundle, the registry address, the record id)
+and they can check the whole claim themselves. No wallet, no keys, no `runs/` folder:
+
+```bash
+python verify_standalone.py --bundle bundle.json --contract 0xREGISTRY --record 3 --chain sepolia
+#   or: python -m verified.cli verify-bundle --bundle bundle.json --contract 0x… --record 3
+```
+
+It re-derives `keccak256(canonical(bundle))` and the Merkle root from the bundle bytes, recomputes the
+leaf for one field **locally** (never taking a leaf value on trust) and asks the contract to check the
+proof, then compares every stored field. Exit code `0` = VERIFIED, `1` = TAMPERED. The bundle can come
+straight from IPFS via the CID in the record.
 
 ## The UI
 
