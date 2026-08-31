@@ -20,7 +20,7 @@
                           salted commitment of every candidate       keccak256      + Bitcoin/OTS  on-chain Merkle proof
 ```
 
-1. **Face scan.** A face is detected with SCRFD-10GF and encoded into a 512-d ArcFace template (InsightFace *buffalo_l*, run directly with ONNX Runtime — no compiled deps). The UI adds a live quality meter and a **head-turn liveness challenge** so a photo held to the camera is not accepted. Only a **salted HMAC commitment** of the template is ever published; the biometric itself never leaves your machine.
+1. **Face scan.** A face is detected with SCRFD-10GF and encoded into a 512-d ArcFace template (InsightFace *buffalo_l*, run directly with ONNX Runtime — no compiled deps, and **verified numerically identical to the reference implementation**: `python scripts/validate_against_insightface.py` compares both on the same models — 12 sample faces, 0.0000 px bounding-box and landmark delta, worst embedding cosine 0.999999). The UI adds a live quality meter and a **head-turn liveness challenge** so a photo held to the camera is not accepted. Only a **salted HMAC commitment** of the template is ever published; the biometric itself never leaves your machine.
 2. **Genuine search.** The face crop is submitted to several *real* reverse-image engines in parallel — Google Lens (via SerpApi's image upload), Yandex Images, Google Reverse Image, Google Cloud Vision Web Detection — plus direct social APIs (Bluesky). Nothing is hard-coded: every candidate URL comes back from the engines at run time.
 3. **Biometric re-verification (the key idea).** Reverse-image engines return *visually similar* pages. We download every candidate image, detect the faces in it, embed them and compute cosine similarity to the scanned face. Only candidates whose face **is the same person** (cosine ≥ 0.40, calibrated) become *verified matches*; look-alikes are rejected and shown greyed-out for transparency. The person's name is then inferred from web entities / verified titles and used for a second, name-based sweep of social networks — those results are face-verified too.
 4. **Evidence bundle.** The chosen post (URL, platform, author, text, timestamp, image URL + SHA-256 of its bytes, similarity, engines, search statistics, face commitment) is serialised as **canonical JSON** (sorted keys, no whitespace). We compute `keccak256(bundle)` and a **Merkle root over every field** so single fields can later be proven on-chain without disclosing the rest.
@@ -125,6 +125,7 @@ Keyboard: `space` captures. Drag-and-drop a photo anywhere on the page to load i
 
 ## Design notes & innovations
 
+* **Reference-exact alignment.** ArcFace alignment uses the deterministic least-squares (Umeyama) similarity fit. OpenCV's robust estimators, the obvious shortcut, treat one landmark of a *turned* face as an outlier and silently drop it — on our group-photo sample that changed the crop scale by 5% and moved the embedding by 0.02 cosine, exactly where reverse-image results are hardest. The validation script above pins this.
 * **Verified, not similar.** Reverse-image search alone is noisy; we treat engine output as *candidates* and let the biometric model decide. Bands are relative to `MATCH_THRESHOLD` (default 0.40): *strong* ≥ threshold + 0.10, *match* ≥ threshold, *weak* ≥ threshold − 0.08, else rejected. Measured on the bundled sample photos: same person 0.75–0.97, different people −0.05 … 0.21 — a wide, safe margin.
 * **Multi-engine fan-out + identity expansion.** Google Lens (image-upload API, no public URL needed), Yandex (notoriously strong on faces), Google Reverse Image, Vision Web Detection (web entities give the name), and a second sweep by name across Instagram / X / LinkedIn / Facebook / Threads / TikTok / YouTube plus Bluesky's open API. Results are deduplicated by canonical URL and remember every engine that surfaced them.
 * **Privacy by construction.** The 512-d template is quantised and committed with `HMAC-SHA256(salt, template)`; only the commitment goes on-chain. The query crop is published to a 1-hour temporary host solely for the engines that need a URL (Google Lens gets a direct upload). Consent-first framing: the intended use is verifying *your own* likeness, detecting impersonation / deepfake reuse, and evidencing authorship.
@@ -173,7 +174,8 @@ and different people are rejected; the anchor verifies end to end; a one-field t
 verdict to TAMPERED and every affected check to FAIL; Merkle proofs hold for all leaves of bundles
 of 1–19 fields and are accepted by the deployed contract; dotted keys cannot collide; the SSRF guard
 blocks 13 private-address notations; hostile engine payloads (nulls, wrong types) cannot crash a run;
-and the HTTP surface rejects path traversal and cross-origin writes.
+and the HTTP surface rejects path traversal and cross-origin writes. Two alignment tests pin the
+Umeyama fit (exact recovery of known similarity transforms, and proof that no landmark is discarded).
 
 ## Known limitations
 

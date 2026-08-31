@@ -198,3 +198,42 @@ def test_standalone_verifier_is_runnable():
     assert r.returncode == 0
     for flag in ("--bundle", "--contract", "--record", "--chain", "--field"):
         assert flag in r.stdout
+
+
+# ---------------------------------------------------------------- alignment
+def test_umeyama_recovers_an_exact_similarity_transform():
+    """The ArcFace alignment must be the exact least-squares similarity fit.
+
+    A robust estimator (cv2 LMEDS/RANSAC) drops a landmark it considers an
+    outlier on turned faces, which changes the crop scale and shifts the
+    embedding - this test pins the deterministic solution.
+    """
+    import numpy as np
+
+    from verified.face.engine import ARCFACE_DST, umeyama_similarity
+
+    for angle, scale, tx, ty in [(0, 1, 0, 0), (23, 1.7, 40, -12), (-47, 0.6, -8, 30), (180, 2.2, 5, 5)]:
+        th = np.deg2rad(angle)
+        R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]]) * scale
+        src = ARCFACE_DST.astype(float) @ R.T + np.array([tx, ty])
+        M = umeyama_similarity(src, ARCFACE_DST.astype(float))
+        assert M is not None
+        back = src @ M[:, :2].T + M[:, 2]
+        assert np.abs(back - ARCFACE_DST).max() < 1e-3, (angle, scale, np.abs(back - ARCFACE_DST).max())
+        # uniform scale: both axes of the recovered matrix must have equal norm
+        assert abs(np.linalg.norm(M[:, 0]) - np.linalg.norm(M[:, 1])) < 1e-6
+
+
+def test_alignment_uses_every_landmark():
+    """Perturbing any single landmark must move the transform - proof that no
+    point is being discarded as an outlier."""
+    import numpy as np
+
+    from verified.face.engine import ARCFACE_DST, umeyama_similarity
+
+    base = umeyama_similarity(ARCFACE_DST.astype(float), ARCFACE_DST.astype(float))
+    for i in range(5):
+        src = ARCFACE_DST.astype(float).copy()
+        src[i] += 6.0
+        M = umeyama_similarity(src, ARCFACE_DST.astype(float))
+        assert np.abs(M - base).max() > 1e-3, f"landmark {i} was ignored by the estimator"

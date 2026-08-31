@@ -113,6 +113,46 @@ def _nms(dets, thresh=0.4):
     return keep
 
 
+def umeyama_similarity(src: np.ndarray, dst: np.ndarray) -> np.ndarray | None:
+    """Least-squares similarity transform (rotation + uniform scale + translation)
+    mapping `src` onto `dst`; Umeyama (1991). Returns a 2x3 affine matrix.
+
+    Equivalent to skimage.transform.SimilarityTransform().estimate(src, dst),
+    which is what InsightFace uses, but with no extra dependency.
+    """
+    src = np.asarray(src, dtype=np.float64)
+    dst = np.asarray(dst, dtype=np.float64)
+    if src.shape != dst.shape or src.shape[0] < 2:
+        return None
+    n, dim = src.shape
+    src_mean, dst_mean = src.mean(axis=0), dst.mean(axis=0)
+    src_demean, dst_demean = src - src_mean, dst - dst_mean
+    A = dst_demean.T @ src_demean / n
+    d = np.ones((dim,), dtype=np.float64)
+    if np.linalg.det(A) < 0:
+        d[dim - 1] = -1
+    T = np.eye(dim + 1, dtype=np.float64)
+    U, S, Vt = np.linalg.svd(A)
+    rank = np.linalg.matrix_rank(A)
+    if rank == 0:
+        return None
+    if rank == dim - 1:
+        if np.linalg.det(U) * np.linalg.det(Vt) > 0:
+            T[:dim, :dim] = U @ Vt
+        else:
+            s = d[dim - 1]
+            d[dim - 1] = -1
+            T[:dim, :dim] = U @ np.diag(d) @ Vt
+            d[dim - 1] = s
+    else:
+        T[:dim, :dim] = U @ np.diag(d) @ Vt
+    var = src_demean.var(axis=0).sum()
+    scale = 1.0 / var * (S @ d) if var > 0 else 1.0
+    T[:dim, dim] = dst_mean - scale * (T[:dim, :dim] @ src_mean.T)
+    T[:dim, :dim] *= scale
+    return T[:dim, : dim + 1].astype(np.float32)
+
+
 def _transform(img, center, output_size, scale, rotation=0.0):
     """Affine crop used by the InsightFace attribute / landmark heads."""
     cx, cy = center
@@ -200,8 +240,15 @@ class FaceEngine:
     # ------------------------------------------------------------------ embed
     @staticmethod
     def align(img: np.ndarray, kps: np.ndarray, size: int = 112) -> np.ndarray:
-        M, _ = cv2.estimateAffinePartial2D(kps.astype(np.float32), ARCFACE_DST, method=cv2.LMEDS)
-        if M is None:  # degenerate landmarks: fall back to bbox-less identity crop
+        """ArcFace alignment: similarity transform of the 5 landmarks onto the
+        reference template. Uses the exact least-squares (Umeyama) solution -
+        the same one the reference InsightFace pipeline uses.
+
+        This matters: OpenCV's robust estimators (LMEDS/RANSAC) treat one
+        landmark of a turned face as an outlier and drop it, which changes the
+        crop scale and measurably shifts the embedding."""
+        M = umeyama_similarity(kps.astype(np.float64), ARCFACE_DST.astype(np.float64) * (size / 112.0))
+        if M is None:  # degenerate landmarks
             M = np.array([[1, 0, 0], [0, 1, 0]], dtype=np.float32)
         return cv2.warpAffine(img, M, (size, size), borderValue=0.0)
 
