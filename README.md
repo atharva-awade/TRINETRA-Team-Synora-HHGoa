@@ -121,7 +121,9 @@ external services besides the two web fonts:
 * the independent re-verification checklist with a VERIFIED / TAMPERED verdict and a one-click **Tamper test**;
 * a ledger of previous anchors, a live ticker of pipeline events, and the raw event log.
 
-Keyboard: `space` captures. Drag-and-drop a photo anywhere on the page to load it.
+Keyboard: `space` captures. Drag-and-drop a photo anywhere on the page to load it. Tested on
+Chrome/Edge (Chromium) down to a 1366×768 laptop screen with no horizontal scrolling at any width;
+`prefers-reduced-motion` disables the animation.
 
 ## Design notes & innovations
 
