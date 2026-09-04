@@ -5,7 +5,8 @@ Goal of the recording: show **face scan → real social post found → on-chain 
 ## Before you hit record
 
 1. `.env` has `SERPAPI_KEY`, `PRIVATE_KEY` (funded with **≥ 0.02 Sepolia ETH** — deploy + EAS schema + anchor + attest is four transactions), `CONTRACT_ADDRESS` (run `python -m verified.cli deploy` once — you can also show the deploy in the recording), optionally `GOOGLE_VISION_API_KEY` and `PINATA_JWT`.
-2. Run `python -m verified.cli doctor` — everything green.
+2. Run `python -m verified.cli doctor --probe` — every row green. This makes one real call to each
+   external service (≈2 SerpApi searches), so nothing is discovered for the first time on camera.
 3. Pick the subject:
    * **Primary:** a teammate with public photos (public LinkedIn profile picture, public Instagram/X posts). Do one dry run *before* recording (it costs ~4 SerpApi searches) to confirm verified matches come back. If the teammate's footprint is too small, fall back to:
    * **Fallback:** a photo of a well-known public figure (upload mode). Verified Instagram/X/Facebook matches are essentially guaranteed.
@@ -14,7 +15,9 @@ Goal of the recording: show **face scan → real social post found → on-chain 
 
 ## Take
 
-**0:00 — Terminal.** `python -m verified.cli doctor` → show models, SerpApi account (searches left), RPC block, wallet balance, contract bytes. One sentence: "Real engines, real chain, no mocks."
+**0:00 — Terminal.** `python -m verified.cli doctor` → show models, SerpApi account (searches left),
+RPC block, wallet balance, contract bytes. One sentence: "Real engines, real chain, no mocks."
+(If you want to prove the services live on camera, `doctor --probe` does exactly that in ~15 s.)
 
 **0:30 — UI.** `python -m verified.cli serve`, open `http://127.0.0.1:8000`. Point at the header pills: chain + block, wallet balance, engines enabled.
 

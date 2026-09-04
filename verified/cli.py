@@ -98,8 +98,13 @@ def _settings() -> Settings:
 
 
 @app.command()
-def doctor():
-    """Check models, keys, RPC connectivity, wallet balance and contract."""
+def doctor(probe: bool = typer.Option(False, "--probe", help="also make one real call to every external service (uses ~2 SerpApi searches)")):
+    """Check models, keys, RPC connectivity, wallet balance and contract.
+
+    With --probe it additionally proves the plumbing end to end: it uploads the
+    bundled sample face to SerpApi, runs one Google Lens query, publishes a
+    temporary crop, and touches Vision / Pinata / OpenTimestamps - so nothing is
+    discovered for the first time in the middle of a demo."""
     s = _settings()
     t = Table(title="verified doctor", box=box.SIMPLE_HEAVY)
     t.add_column("check")
@@ -155,6 +160,111 @@ def doctor():
     except Exception as e:  # noqa: BLE001
         row("RPC", False, str(e)[:200])
     console.print(t)
+    if probe:
+        _probe(s)
+
+
+def _probe(s: Settings) -> None:
+    """One real call per external service, with the raw error if it fails."""
+    import cv2
+
+    from .face.engine import FaceEngine, crop_face
+    from .search import host
+    from .search.engines import serpapi_engines as serp
+    from .search.pipeline import encode_jpeg_under
+
+    t = Table(title="live service probe", box=box.SIMPLE_HEAVY)
+    t.add_column("service")
+    t.add_column("status")
+    t.add_column("detail")
+    rows: list[tuple[str, bool, str]] = []
+
+    sample = ROOT / "samples" / "obama.jpg"
+    img = cv2.imread(str(sample))
+    face = FaceEngine().primary_face(img) if img is not None else None
+    if face is None:
+        rows.append(("sample face", False, f"could not detect a face in {sample}"))
+        crop_bytes = b""
+    else:
+        crop_bytes = encode_jpeg_under(crop_face(img, face, margin=0.6))
+        rows.append(("sample face", True, f"{len(crop_bytes) / 1024:.0f} KB crop from samples/obama.jpg"))
+
+    public_url = None
+    if s.image_host != "none":
+        try:
+            public_url, hname = host.publish_temporary(crop_bytes or b"x", "probe.jpg", s.image_host, s.pinata_jwt, s.pinata_gateway)
+            rows.append(("image host", True, f"{hname} -> {public_url}"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("image host", False, f"{type(e).__name__}: {e}"))
+
+    if s.serpapi_key and crop_bytes:
+        image_id = None
+        try:
+            image_id = serp.upload_image(crop_bytes, s.serpapi_key)
+            rows.append(("serpapi image upload", True, f"image_id={image_id[:28]}..."))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("serpapi image upload", False, f"{type(e).__name__}: {str(e)[:140]}"))
+        try:
+            cands, _raw = serp.google_lens(s.serpapi_key, image_id=image_id, url=public_url, country=s.search_country, hl=s.search_lang)
+            social = sum(c.is_social for c in cands)
+            rows.append(("google lens", bool(cands), f"{len(cands)} candidates, {social} social, {sum(c.is_post for c in cands)} posts"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("google lens", False, f"{type(e).__name__}: {str(e)[:140]}"))
+        if public_url and s.enable_yandex:
+            try:
+                cands, _raw = serp.yandex_reverse(s.serpapi_key, public_url)
+                rows.append(("yandex images", bool(cands), f"{len(cands)} candidates, {sum(c.is_social for c in cands)} social"))
+            except Exception as e:  # noqa: BLE001
+                rows.append(("yandex images", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if (s.google_vision_api_key or s.google_application_credentials) and crop_bytes:
+        try:
+            from .search.engines import gvision
+
+            cands, _raw, hints = gvision.web_detection(crop_bytes, s.google_vision_api_key, s.google_application_credentials)
+            rows.append(("google vision", True, f"{len(cands)} candidates; entities: {', '.join(hints[:3]) or '-'}"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("google vision", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if s.enable_bluesky:
+        try:
+            from .search.engines import bluesky
+
+            cands, _raw = bluesky.search("Barack Obama", max_actors=2, max_posts=5)
+            rows.append(("bluesky", True, f"{len(cands)} candidates from the public API"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("bluesky", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if s.pinata_jwt:
+        try:
+            from .chain.ipfs import pin_bytes
+
+            cid = pin_bytes(b'{"probe":true}', "probe.json", s.pinata_jwt, name="verified-probe")
+            rows.append(("pinata ipfs", True, f"pinned {cid}"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("pinata ipfs", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if s.enable_ots:
+        import tempfile
+        from pathlib import Path as _P
+
+        try:
+            from .chain import ots
+
+            with tempfile.TemporaryDirectory() as d:
+                info = ots.stamp(b"verified probe", _P(d) / "probe.ots")
+            rows.append(("opentimestamps", True, f"{len(info['calendars'])} calendars accepted the digest"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("opentimestamps", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    for name, ok, detail in rows:
+        t.add_row(name, "[green]OK[/green]" if ok else "[red]FAIL[/red]", esc(str(detail)))
+    console.print(t)
+    bad = [n for n, ok, _ in rows if not ok]
+    if bad:
+        console.print(f"[yellow]not working: {', '.join(bad)} - paste this table if you need help[/yellow]")
+    else:
+        console.print("[green]every external service answered - the pipeline is ready to record[/green]")
 
 
 @app.command()
@@ -326,6 +436,111 @@ def _print_matches(matches: list[dict]) -> None:
     for i, m in enumerate(matches[:15]):
         t.add_row(str(i), f"{m['similarity']:.3f}", m["band"], esc(m["platform"]), "✓" if m["is_post"] else "", ",".join(e.replace("google_", "g_") for e in m["engines"]), esc(m["link"][:70]))
     console.print(t)
+    if probe:
+        _probe(s)
+
+
+def _probe(s: Settings) -> None:
+    """One real call per external service, with the raw error if it fails."""
+    import cv2
+
+    from .face.engine import FaceEngine, crop_face
+    from .search import host
+    from .search.engines import serpapi_engines as serp
+    from .search.pipeline import encode_jpeg_under
+
+    t = Table(title="live service probe", box=box.SIMPLE_HEAVY)
+    t.add_column("service")
+    t.add_column("status")
+    t.add_column("detail")
+    rows: list[tuple[str, bool, str]] = []
+
+    sample = ROOT / "samples" / "obama.jpg"
+    img = cv2.imread(str(sample))
+    face = FaceEngine().primary_face(img) if img is not None else None
+    if face is None:
+        rows.append(("sample face", False, f"could not detect a face in {sample}"))
+        crop_bytes = b""
+    else:
+        crop_bytes = encode_jpeg_under(crop_face(img, face, margin=0.6))
+        rows.append(("sample face", True, f"{len(crop_bytes) / 1024:.0f} KB crop from samples/obama.jpg"))
+
+    public_url = None
+    if s.image_host != "none":
+        try:
+            public_url, hname = host.publish_temporary(crop_bytes or b"x", "probe.jpg", s.image_host, s.pinata_jwt, s.pinata_gateway)
+            rows.append(("image host", True, f"{hname} -> {public_url}"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("image host", False, f"{type(e).__name__}: {e}"))
+
+    if s.serpapi_key and crop_bytes:
+        image_id = None
+        try:
+            image_id = serp.upload_image(crop_bytes, s.serpapi_key)
+            rows.append(("serpapi image upload", True, f"image_id={image_id[:28]}..."))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("serpapi image upload", False, f"{type(e).__name__}: {str(e)[:140]}"))
+        try:
+            cands, _raw = serp.google_lens(s.serpapi_key, image_id=image_id, url=public_url, country=s.search_country, hl=s.search_lang)
+            social = sum(c.is_social for c in cands)
+            rows.append(("google lens", bool(cands), f"{len(cands)} candidates, {social} social, {sum(c.is_post for c in cands)} posts"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("google lens", False, f"{type(e).__name__}: {str(e)[:140]}"))
+        if public_url and s.enable_yandex:
+            try:
+                cands, _raw = serp.yandex_reverse(s.serpapi_key, public_url)
+                rows.append(("yandex images", bool(cands), f"{len(cands)} candidates, {sum(c.is_social for c in cands)} social"))
+            except Exception as e:  # noqa: BLE001
+                rows.append(("yandex images", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if (s.google_vision_api_key or s.google_application_credentials) and crop_bytes:
+        try:
+            from .search.engines import gvision
+
+            cands, _raw, hints = gvision.web_detection(crop_bytes, s.google_vision_api_key, s.google_application_credentials)
+            rows.append(("google vision", True, f"{len(cands)} candidates; entities: {', '.join(hints[:3]) or '-'}"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("google vision", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if s.enable_bluesky:
+        try:
+            from .search.engines import bluesky
+
+            cands, _raw = bluesky.search("Barack Obama", max_actors=2, max_posts=5)
+            rows.append(("bluesky", True, f"{len(cands)} candidates from the public API"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("bluesky", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if s.pinata_jwt:
+        try:
+            from .chain.ipfs import pin_bytes
+
+            cid = pin_bytes(b'{"probe":true}', "probe.json", s.pinata_jwt, name="verified-probe")
+            rows.append(("pinata ipfs", True, f"pinned {cid}"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("pinata ipfs", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    if s.enable_ots:
+        import tempfile
+        from pathlib import Path as _P
+
+        try:
+            from .chain import ots
+
+            with tempfile.TemporaryDirectory() as d:
+                info = ots.stamp(b"verified probe", _P(d) / "probe.ots")
+            rows.append(("opentimestamps", True, f"{len(info['calendars'])} calendars accepted the digest"))
+        except Exception as e:  # noqa: BLE001
+            rows.append(("opentimestamps", False, f"{type(e).__name__}: {str(e)[:140]}"))
+
+    for name, ok, detail in rows:
+        t.add_row(name, "[green]OK[/green]" if ok else "[red]FAIL[/red]", esc(str(detail)))
+    console.print(t)
+    bad = [n for n, ok, _ in rows if not ok]
+    if bad:
+        console.print(f"[yellow]not working: {', '.join(bad)} - paste this table if you need help[/yellow]")
+    else:
+        console.print("[green]every external service answered - the pipeline is ready to record[/green]")
 
 
 if __name__ == "__main__":

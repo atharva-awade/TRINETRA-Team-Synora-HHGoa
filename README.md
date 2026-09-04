@@ -67,6 +67,7 @@ python -m verified.cli models                       # downloads InsightFace buff
 python -m verified.cli wallet new                   # prints a throwaway testnet address -> fund it at the faucet
 #   edit .env: SERPAPI_KEY=...  (optional: GOOGLE_VISION_API_KEY, PINATA_JWT)
 python -m verified.cli doctor                       # checks models, keys, RPC, balance, contract
+python -m verified.cli doctor --probe               # ...and makes one real call to every service
 python -m verified.cli deploy                       # deploys VerifiedRegistry to Sepolia (once, ~20 s)
 python -m verified.cli serve                        # open http://127.0.0.1:8000
 ```
@@ -77,7 +78,7 @@ Windows one-liner: `run.bat` · macOS/Linux: `./run.sh` · Docker: `docker compo
 
 ```bash
 python -m verified.cli models                          # download the face models (once)
-python -m verified.cli doctor                          # models, keys, RPC, wallet, contract
+python -m verified.cli doctor [--probe]                # keys, RPC, wallet, contract (+ live service probe)
 python -m verified.cli wallet new                      # throwaway testnet wallet -> .env
 python -m verified.cli deploy                          # deploy VerifiedRegistry -> .env
 python -m verified.cli run --image photo.jpg           # full pipeline: scan -> search -> anchor -> re-verify
@@ -92,6 +93,22 @@ All commands are also available through the `Makefile` (`make setup`, `make doct
 `make run IMG=photo.jpg`, `make verify RUN=<id>`, `make tamper RUN=<id>`, `make test`).
 
 Every run writes an auditable folder `runs/<run_id>/` with the query image, face JSON, **raw engine responses**, the canonical bundle, the matched image, anchor receipt, EAS/IPFS/OTS records and the verification report.
+
+### Is everything actually wired up?
+
+`python -m verified.cli doctor --probe` answers that before you rely on it: it uploads the bundled
+sample face to SerpApi, runs one Google Lens query, publishes a temporary crop, and touches Yandex,
+Vision, Bluesky, Pinata and OpenTimestamps — printing the raw error for anything that does not
+answer. Two searches of quota to know the whole chain of services works.
+
+```
+  service                status   detail
+  sample face            OK       87 KB crop from samples/obama.jpg
+  serpapi image upload   OK       image_id=...
+  google lens            OK       41 candidates, 22 social, 9 posts
+  yandex images          OK       28 candidates, 11 social
+  opentimestamps         OK       2 calendars accepted the digest
+```
 
 ### Anyone can verify it — without this repo's data, and without trusting us
 

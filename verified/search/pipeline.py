@@ -161,10 +161,16 @@ def run_search(
     jobs = []
 
     def _lens(kind: str, data: bytes):
-        # Google Lens is driven by SerpApi's direct image upload; the temporary
-        # public URL (when we have one) is passed as a documented fallback so a
-        # rejected image_id still produces results.
-        image_id = serp.upload_image(data, settings.serpapi_key)
+        # Google Lens is driven by SerpApi's direct image upload. If the upload
+        # endpoint is unavailable we fall back to the temporary public URL, so
+        # the most important engine has two independent ways to be reached.
+        image_id = None
+        try:
+            image_id = serp.upload_image(data, settings.serpapi_key)
+        except Exception as e:  # noqa: BLE001
+            if not public_url:
+                raise
+            emit("search.warning", {"message": f"SerpApi image upload failed ({str(e)[:90]}); using the hosted URL for Google Lens"})
         cands, raw = serp.google_lens(settings.serpapi_key, image_id=image_id, url=public_url, country=settings.search_country, hl=settings.search_lang)
         (raw_dir / f"google_lens_{kind}.json").write_text(json.dumps(raw, indent=1), encoding="utf-8")
         kg = raw.get("knowledge_graph")
