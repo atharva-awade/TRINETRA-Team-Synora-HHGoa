@@ -16,6 +16,8 @@ lxml>=5.1,<7
 # blockchain
 web3>=7.0,<9
 eth-account>=0.11,<1
+eth-abi>=4.2,<6          # used directly to encode the EAS attestation payload
+eth-utils>=2.3,<6        # used directly for keccak256
 
 # extras
 qrcode>=7.4,<9

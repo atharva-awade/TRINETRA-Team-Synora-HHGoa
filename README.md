@@ -56,7 +56,10 @@ EVM network works too. The test-suite runs the exact same contract and code path
 
 ## Quick start
 
-Prerequisites: Python 3.10+ (Windows/macOS/Linux), a webcam (optional — you can upload a photo), and two free accounts: [SerpApi](https://serpapi.com) (250 searches/month free) and a Sepolia faucet ([Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), 0.05 ETH/day).
+**New to the project? [SETUP.md](SETUP.md) is a step-by-step runbook** (which keys, where to get
+them, what each costs, and the Windows commands verbatim). The short version:
+
+Prerequisites: Python 3.11 or 3.12 (Windows/macOS/Linux), a webcam (optional — you can upload a photo), and two free accounts: [SerpApi](https://serpapi.com) (250 searches/month free) and a Sepolia faucet ([Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), 0.05 ETH/day).
 
 ```bash
 git clone <this repo> && cd verified
@@ -73,6 +76,10 @@ python -m verified.cli serve                        # open http://127.0.0.1:8000
 ```
 
 Windows one-liner: `run.bat` · macOS/Linux: `./run.sh` · Docker: `docker compose up --build` (the webcam is captured in the browser, so Docker works on any OS).
+
+Two credentials are mandatory — a free [SerpApi](https://serpapi.com) key (the search half) and a
+faucet drip of Sepolia ETH (the chain half, ≥0.02 for a first run). Google Vision and Pinata are
+optional extras; Bluesky and OpenTimestamps need no key at all.
 
 ### CLI
 
