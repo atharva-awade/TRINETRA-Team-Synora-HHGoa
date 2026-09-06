@@ -240,8 +240,32 @@ def preview_reset(session: str = Form("default")):
 
 
 # ------------------------------------------------------------------- scan
+@app.post("/api/detect_faces", dependencies=[Depends(same_origin)])
+async def detect_faces(image: UploadFile = File(...)):
+    data = await image.read()
+    if not data:
+        raise HTTPException(400, "empty image")
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "could not decode image")
+    eng = await asyncio.to_thread(engine)
+    faces = await asyncio.to_thread(eng.analyze, img)
+    faces.sort(key=lambda f: (f.width * f.height, f.score), reverse=True)
+    return {
+        "faces": [f.to_dict() for f in faces],
+        "size": [img.shape[1], img.shape[0]],
+    }
+
+
 @app.post("/api/scan", dependencies=[Depends(same_origin)])
-async def scan(image: UploadFile = File(...), source: str = Form("upload"), auto_anchor: bool = Form(True)):
+async def scan(
+    image: UploadFile = File(...),
+    source: str = Form("upload"),
+    auto_anchor: bool = Form(True),
+    face_index: int = Form(0),
+    target_url: str = Form(""),
+    name_hint: str = Form(""),
+):
     data = await image.read()
     if not data:
         raise HTTPException(400, "empty image")
@@ -252,7 +276,14 @@ async def scan(image: UploadFile = File(...), source: str = Form("upload"), auto
     def work():
         try:
             p = _pipeline(run_id)
-            summary = p.scan(data, source=source, run_id=run_id)
+            summary = p.scan(
+                data,
+                source=source,
+                run_id=run_id,
+                face_index=face_index,
+                target_url=target_url,
+                name_hint=name_hint,
+            )
             if summary["status"] == "matches" and auto_anchor:
                 p.anchor(run_id)
             elif summary["status"] == "matches":

@@ -22,6 +22,7 @@
   const state = {
     stream: null, previewTimer: null, session: Math.random().toString(36).slice(2),
     runId: null, es: null, lastT: 0, matches: [], selected: null, source: "webcam", uploadBlob: null,
+    loadedImg: null, detectedFaces: [], selectedFaceIndex: 0,
     livenessPassed: false, anchored: false, candSeen: 0, candTotal: 0, verified: 0, rejected: 0,
     best: 0, stageState: {}, ticker: [], busy: false,
   };
@@ -87,6 +88,8 @@
     state.source = "webcam"; state.livenessPassed = false;
     $("#cam-wrap").classList.remove("upload");
     $("#cam-idle").hidden = true; $("#cam-hud").hidden = false; $("#btn-stop").hidden = false;
+    const rBtn = $("#btn-reset-scan"); if (rBtn) rBtn.hidden = true;
+    const cBtn = $("#btn-change-photo"); if (cBtn) cBtn.hidden = true;
     try { await fetch("/api/preview/reset", { method: "POST", body: new URLSearchParams({ session: state.session }) }); } catch {}
     tick("camera live · detecting face", "hot");
     video.onloadedmetadata = () => { overlay.width = video.videoWidth; overlay.height = video.videoHeight; previewLoop(); };
@@ -179,17 +182,96 @@
 
   // ---------------------------------------------------------------- upload
   function handleFile(file) {
-    if (!file || !/^image\//.test(file.type)) return;
+    if (!file) return;
+    if (file.type && !file.type.startsWith("image/") && !/\.(jpe?g|png|webp|bmp|gif)$/i.test(file.name)) return;
     stopCam();
     state.uploadBlob = file; state.source = "upload";
+    state.detectedFaces = []; state.selectedFaceIndex = 0;
     const url = URL.createObjectURL(file);
     $("#cam-wrap").classList.add("upload");
     $("#cam-idle").hidden = true; $("#cam-hud").hidden = true;
-    $("#btn-capture").disabled = state.busy;
+    $("#btn-capture").disabled = true;
+    const rBtn = $("#btn-reset-scan"); if (rBtn) rBtn.hidden = false;
+    const cBtn = $("#btn-change-photo"); if (cBtn) cBtn.hidden = false;
     const img = new Image();
-    img.onload = () => { overlay.width = img.width; overlay.height = img.height; ctx.drawImage(img, 0, 0); setShot(overlay.toDataURL("image/jpeg", .5)); URL.revokeObjectURL(url); };
+    img.onload = async () => {
+      state.loadedImg = img;
+      overlay.width = img.width; overlay.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      setShot(overlay.toDataURL("image/jpeg", .5));
+      URL.revokeObjectURL(url);
+      try {
+        const fd = new FormData();
+        fd.append("image", file, "detect.jpg");
+        const res = await (await fetch("/api/detect_faces", { method: "POST", body: fd })).json();
+        state.detectedFaces = res.faces || [];
+        renderDetectedFacesOverlay();
+        if (state.detectedFaces.length > 0) {
+          updateDetectedFaceCard(state.detectedFaces[0]);
+        }
+      } catch (e) {
+        console.warn("detect_faces error:", e);
+      }
+      $("#btn-capture").disabled = state.busy;
+    };
     img.src = url;
     tick(`photo loaded · ${file.name || "image"}`, "hot");
+  }
+
+  function renderDetectedFacesOverlay() {
+    if (!state.loadedImg) return;
+    overlay.width = state.loadedImg.width; overlay.height = state.loadedImg.height;
+    ctx.drawImage(state.loadedImg, 0, 0);
+    const faces = state.detectedFaces || [];
+    const picker = $("#face-picker"), chips = $("#face-chips");
+    if (picker && chips) {
+      if (faces.length > 1) {
+        picker.hidden = false;
+        chips.innerHTML = "";
+        faces.forEach((f, i) => {
+          const chip = el("button", "face-chip" + (i === state.selectedFaceIndex ? " active" : ""));
+          const ag = f.age_range ? `${f.age_range[0]}–${f.age_range[1]}` : (f.age || "?");
+          chip.innerHTML = `#${i+1} (${ag}y, ${f.gender || "?"}${f.has_sunglasses ? " 🕶️" : ""})`;
+          chip.addEventListener("click", () => {
+            state.selectedFaceIndex = i;
+            renderDetectedFacesOverlay();
+            updateDetectedFaceCard(f);
+            tick(`selected Face #${i+1} as target`, "hot");
+          });
+          chips.appendChild(chip);
+        });
+      } else {
+        picker.hidden = true;
+      }
+    }
+    faces.forEach((f, i) => {
+      const [x1, y1, x2, y2] = f.bbox;
+      const isSel = (i === state.selectedFaceIndex);
+      ctx.lineWidth = isSel ? 4 : 2;
+      ctx.strokeStyle = isSel ? "#38e0ff" : "rgba(244, 226, 200, 0.4)";
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.fillStyle = isSel ? "#38e0ff" : "rgba(244, 226, 200, 0.7)";
+      ctx.font = "bold 15px 'Space Grotesk', sans-serif";
+      const lbl = `#${i+1}` + (isSel ? " (TARGET)" : "");
+      ctx.fillText(lbl, x1 + 4, Math.max(22, y1 - 6));
+    });
+    if (faces[state.selectedFaceIndex]) {
+      updateDetectedFaceCard(faces[state.selectedFaceIndex]);
+    }
+  }
+
+  function updateDetectedFaceCard(f) {
+    $("#face-card").hidden = false;
+    $("#f-det").textContent = fmt(f.det_score);
+    $("#f-q").textContent = fmt((f.quality || {}).overall, 2);
+    let ag = f.age ? `${f.age}` : "–";
+    if (f.age_range && f.age_range.length === 2) {
+      ag = `${f.age_range[0]}–${f.age_range[1]} (est. ~${f.age})`;
+    }
+    $("#f-ag").innerHTML = `${esc(ag)} · ${esc(f.gender ?? "?")}` +
+      (f.has_sunglasses ? ' <span class="badge warn">🕶️ sunglasses</span>' : '');
+    $("#f-n").textContent = state.detectedFaces.length;
+    if (f.commitment) $("#f-commit").textContent = f.commitment;
   }
 
   // ------------------------------------------------------------------- run
@@ -212,6 +294,9 @@
     fd.append("image", blob, "query.jpg");
     fd.append("source", state.source);
     fd.append("auto_anchor", $("#auto-anchor").checked ? "true" : "false");
+    fd.append("face_index", String(state.selectedFaceIndex || 0));
+    const targetUrl = $("#target-url") ? $("#target-url").value.trim() : "";
+    if (targetUrl) fd.append("target_url", targetUrl);
     try {
       const r = await fetch("/api/scan", { method: "POST", body: fd });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -242,6 +327,42 @@
     ["st-cand", "st-ver", "st-rej"].forEach((id) => { const n = $("#" + id); n.dataset.v = 0; n.textContent = "0"; });
     $("#st-best").textContent = "–";
     Object.assign(state, { matches: [], selected: null, anchored: false, candSeen: 0, candTotal: 0, verified: 0, rejected: 0, best: 0 });
+  }
+
+  function resetToUpload(openPicker = false) {
+    if (state.es) { state.es.close(); state.es = null; }
+    stopCam();
+    resetRunUI();
+    state.uploadBlob = null;
+    state.loadedImg = null;
+    state.detectedFaces = [];
+    state.selectedFaceIndex = 0;
+    state.source = "upload";
+    state.busy = false;
+    const fileInput = $("#file");
+    if (fileInput) fileInput.value = "";
+    $("#cam-wrap").classList.remove("upload");
+    $("#cam-wrap").style.removeProperty("--shot");
+    if (overlay && ctx) {
+      overlay.width = 640; overlay.height = 480;
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+    }
+    $("#cam-idle").hidden = false;
+    $("#cam-hud").hidden = true;
+    $("#face-card").hidden = true;
+    const picker = $("#face-picker"); if (picker) picker.hidden = true;
+    $("#btn-capture").disabled = true;
+    const rBtn = $("#btn-reset-scan"); if (rBtn) rBtn.hidden = true;
+    const cBtn = $("#btn-change-photo"); if (cBtn) cBtn.hidden = true;
+    const sPanel = $("#panel-scan");
+    if (sPanel) {
+      sPanel.hidden = false;
+      sPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    tick("ready · select a photo or start camera");
+    if (openPicker && fileInput) {
+      setTimeout(() => fileInput.click(), 80);
+    }
   }
 
   // ---------------------------------------------------------------- events
@@ -313,7 +434,12 @@
     if (crop) $("#face-crop").src = crop;
     $("#f-det").textContent = fmt(d.det_score);
     $("#f-q").textContent = fmt(d.quality.overall, 2);
-    $("#f-ag").textContent = `${d.age ?? "?"} · ${d.gender ?? "?"}`;
+    let ag = d.age ? `${d.age}` : "–";
+    if (d.age_range && d.age_range.length === 2) {
+      ag = `${d.age_range[0]}–${d.age_range[1]} (est. ~${d.age})`;
+    }
+    $("#f-ag").innerHTML = `${esc(ag)} · ${esc(d.gender ?? "?")}` +
+      (d.has_sunglasses ? ' <span class="badge warn">🕶️ sunglasses</span>' : '');
     $("#f-n").textContent = d.faces_in_frame;
     $("#f-commit").textContent = d.commitment;
     const ann = safeImg(d.annotated_b64);
@@ -345,7 +471,7 @@
   function onCandidate(d) {
     state.candSeen = Math.max(state.candSeen, d.done);
     if (d.similarity !== undefined) {
-      if (d.band === "reject") state.rejected++; else state.verified++;
+      if (d.band === "strong" || d.band === "match") state.verified++; else state.rejected++;
       if (d.similarity > state.best) state.best = d.similarity;
       const c = el("div", `cand ${d.band}${d.band === "reject" ? " reject" : ""}`);
       c.title = `${d.title || ""}\n${d.link}\ncosine ${fmt(d.similarity)} · ${d.band} · via ${d.engine}`;
@@ -482,6 +608,8 @@
     if (state.es) state.es.close();
     state.es = null;
     state.busy = false; $("#btn-capture").disabled = false;
+    const rBtn = $("#btn-reset-scan"); if (rBtn) rBtn.hidden = false;
+    const cBtn = $("#btn-change-photo"); if (cBtn && state.source === "upload") cBtn.hidden = false;
     loadLedger();
     if (d.status === "no_match") noMatch(d);
     if (d.status === "no_face") { $("#hint").textContent = "no face detected — try again with better light"; tick("no face detected", "bad"); }
@@ -492,8 +620,47 @@
     $("#match-count").textContent = "no verified match";
     const box = $("#matches");
     box.innerHTML = '<div class="empty">the search ran, but no candidate passed biometric verification.<br/><b>nothing was anchored</b> — the chain never receives unverified claims.</div>';
-    if (d.rejected_top && d.rejected_top.length) {
+
+    const prob = (d.rejected_top || []).filter((m) => m.similarity >= 0.30);
+    if (prob.length) {
+      const probBox = el("div");
+      probBox.style.cssText = "margin: 16px 0 8px;";
+      probBox.innerHTML = '<div style="font-weight: 600; color: var(--amber); font-size: 13px; margin-bottom: 8px;">Probable Social Matches (Occluded / Re-encoded):</div>';
+      prob.forEach((p, idx) => {
+        const item = el("div");
+        item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: rgba(244, 226, 200, 0.05); border: 1px solid var(--line2); padding: 10px 14px; border-radius: 10px; margin-bottom: 8px;";
+        item.innerHTML = `<div style="min-width: 0; flex: 1; padding-right: 12px;"><div style="font-weight: 600; color: var(--text);">${esc(p.platform || "Web")} · <span class="mono" style="color: var(--amber);">${fmt(p.similarity, 3)} cosine</span></div>` +
+          `<a href="${esc(safeHref(p.link))}" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: var(--cyan); word-break: break-all; display: block;">${esc((p.title || p.link).slice(0, 60))}… ↗</a></div>` +
+          `<button class="btn primary sm glow btn-anchor-prob" data-idx="${idx}" style="flex: none;">Anchor this post</button>`;
+        probBox.appendChild(item);
+      });
+      box.appendChild(probBox);
+      box.querySelectorAll(".btn-anchor-prob").forEach((btn) => {
+        btn.addEventListener("click", () => anchorProbable(parseInt(btn.dataset.idx, 10)));
+      });
+    }
+
+    if (d.rejected_top && d.rejected_top.length && !prob.length) {
       box.innerHTML += `<div class="empty">closest rejected: ${d.rejected_top.map((m) => `${esc(m.platform)} ${fmt(m.similarity, 2)}`).join(" · ")}</div>`;
+    }
+    box.innerHTML += `<div style="text-align: center; margin-top: 16px;"><button class="btn ghost glow" id="btn-no-match-retry">← Upload another photo</button></div>`;
+    const retryBtn = $("#btn-no-match-retry");
+    if (retryBtn) retryBtn.addEventListener("click", () => resetToUpload(true));
+  }
+
+  async function anchorProbable(matchIdx) {
+    if (!state.runId) return;
+    tick(`anchoring candidate #${matchIdx + 1} to blockchain…`, "hot");
+    try {
+      const fd = new FormData();
+      fd.append("match_index", String(matchIdx));
+      const r = await fetch(`/api/anchor/${state.runId}`, { method: "POST", body: fd });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      tick("anchoring started in worker thread…", "good");
+      subscribe(state.runId, "live");
+    } catch (e) {
+      tick(`anchor failed: ${e.message}`, "bad");
+      alert("Anchor failed: " + e.message);
     }
   }
 
@@ -611,11 +778,20 @@
   // ---------------------------------------------------------------- wiring
   $("#btn-cam").addEventListener("click", startCam);
   $("#btn-stop").addEventListener("click", () => { stopCam(); $("#cam-idle").hidden = false; $("#btn-capture").disabled = true; });
-  $("#btn-upload").addEventListener("click", () => $("#file").click());
-  $("#file").addEventListener("change", (e) => handleFile(e.target.files[0]));
+  $("#btn-upload").addEventListener("click", () => {
+    const fi = $("#file");
+    if (fi) { fi.value = ""; fi.click(); }
+  });
+  $("#file").addEventListener("change", (e) => {
+    if (e.target.files && e.target.files[0]) handleFile(e.target.files[0]);
+  });
   $("#btn-capture").addEventListener("click", capture);
   $("#btn-reverify").addEventListener("click", () => reverify(false));
   $("#btn-tamper").addEventListener("click", () => reverify(true));
+  const rBtn = $("#btn-reset-scan"); if (rBtn) rBtn.addEventListener("click", () => resetToUpload(true));
+  const cBtn = $("#btn-change-photo"); if (cBtn) cBtn.addEventListener("click", () => resetToUpload(true));
+  const bSearch = $("#btn-back-search"); if (bSearch) bSearch.addEventListener("click", () => resetToUpload(true));
+  const bChain = $("#btn-back-chain"); if (bChain) bChain.addEventListener("click", () => resetToUpload(true));
   $("#auto-anchor").addEventListener("change", () => renderMatches());
   document.addEventListener("dragover", (e) => e.preventDefault());
   document.addEventListener("drop", (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });

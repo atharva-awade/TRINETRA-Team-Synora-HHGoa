@@ -72,7 +72,7 @@ class Pipeline:
         return datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
 
     # ---------------------------------------------------------------- phase 1
-    def scan(self, image_bytes: bytes, source: str = "upload", run_id: str | None = None) -> dict:
+    def scan(self, image_bytes: bytes, source: str = "upload", run_id: str | None = None, face_index: int = 0, target_url: str = "", name_hint: str = "") -> dict:
         run_id = run_id or self.new_run_id()
         run_dir = self._run_dir(run_id)
         t0 = time.time()
@@ -91,7 +91,8 @@ class Pipeline:
             (run_dir / "run.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
             return summary
         faces.sort(key=lambda f: (f.width * f.height, f.score), reverse=True)
-        face = faces[0]
+        face_idx = min(len(faces) - 1, max(0, face_index))
+        face = faces[face_idx]
         try:
             self.engine.landmarks(img, face)
         except Exception:  # noqa: BLE001
@@ -101,6 +102,8 @@ class Pipeline:
         face_info = {
             **face.to_dict(),
             "faces_in_frame": len(faces),
+            "selected_index": face_idx,
+            "all_faces": [f.to_dict() for f in faces],
             "embedding_dim": int(face.embedding.shape[0]),
             "embedding_norm": round(float(np.linalg.norm(face.embedding)), 4),
             "commitment": commitment,
@@ -110,13 +113,21 @@ class Pipeline:
         }
         np.save(run_dir / "query_embedding.npy", face.embedding)
         (run_dir / "face.json").write_text(json.dumps(face_info, indent=1), encoding="utf-8")
-        _write_jpeg(run_dir / "query_annotated.jpg", draw_faces(img, faces))
+        _write_jpeg(run_dir / "query_annotated.jpg", draw_faces(img, faces, selected_index=face_idx))
+        initial_summary = {
+            "run_id": run_id,
+            "status": "searching",
+            "source": source,
+            "face": face_info,
+            "stage": "search",
+        }
+        _atomic_write(run_dir / "run.json", json.dumps(initial_summary, indent=1, default=str).encode("utf-8"))
         self.emit(
             "face.detected",
             {
                 **face_info,
                 "face_crop_b64": _b64(crop_face(img, face, 0.4), 240),
-                "annotated_b64": _b64(draw_faces(img, faces), 640),
+                "annotated_b64": _b64(draw_faces(img, faces, selected_index=face_idx), 640),
                 "image_size": [img.shape[1], img.shape[0]],
                 "landmarks106": face.landmarks106.round(1).tolist() if face.landmarks106 is not None else None,
                 "elapsed_s": round(time.time() - t0, 2),
@@ -126,7 +137,7 @@ class Pipeline:
 
         # --- search -----------------------------------------------------------
         self.emit("stage", {"stage": "search", "status": "running"})
-        result = run_search(self.engine, img, face, self.s, run_dir, self.emit, source=source)
+        result = run_search(self.engine, img, face, self.s, run_dir, self.emit, source=source, target_url=target_url, name_hint=name_hint)
         status = "matches" if result.matches else "no_match"
         self.emit("stage", {"stage": "search", "status": "done" if result.matches else "failed", "matches": len(result.matches)})
         summary = {
@@ -159,7 +170,15 @@ class Pipeline:
             raise RuntimeError(f"run {run_id} is already anchored (see anchor.json) - refusing to write a duplicate record")
         matches = summary.get("search", {}).get("matches", [])
         if not matches:
-            raise RuntimeError("no verified matches to anchor")
+            rejected = summary.get("search", {}).get("rejected", [])
+            if match_index is not None and 0 <= match_index < len(rejected):
+                matches = [rejected[match_index]]
+                match_index = 0
+            elif rejected and rejected[0].get("similarity", 0) >= 0.30:
+                matches = [rejected[0]]
+                match_index = 0
+            else:
+                raise RuntimeError("no verified matches to anchor")
         idx = self.pick_best(matches) if match_index is None else match_index
         if idx is None or not 0 <= idx < len(matches):
             raise RuntimeError(f"match index {match_index} out of range (0..{len(matches) - 1})")
@@ -352,8 +371,8 @@ class Pipeline:
         self.emit("run.done", {"run_id": run_id, "status": "anchored", "anchor": receipt, "eas": eas_info, "ipfs": ipfs_info, "ots": ots_info, "verification": report})
         return summary
 
-    def run(self, image_bytes: bytes, source: str = "upload", run_id: str | None = None, auto_anchor: bool = True) -> dict:
-        summary = self.scan(image_bytes, source, run_id)
+    def run(self, image_bytes: bytes, source: str = "upload", run_id: str | None = None, auto_anchor: bool = True, face_index: int = 0, target_url: str = "", name_hint: str = "") -> dict:
+        summary = self.scan(image_bytes, source, run_id, face_index=face_index, target_url=target_url, name_hint=name_hint)
         if summary["status"] != "matches":
             self.emit("run.done", {"run_id": summary["run_id"], "status": summary["status"]})
             return summary

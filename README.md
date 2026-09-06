@@ -1,227 +1,224 @@
+# 👁️ TRINETRA — Decentralized Identity & Deepfake-Resistant Facial Provenance Pipeline
+
 <p align="center">
-  <img src="docs/banner.svg" alt="VERIFIED" width="100%"/>
+  <img src="docs/banner.svg" alt="TRINETRA Banner" width="100%"/>
 </p>
 
-<h1 align="center">VERIFIED — face → post → chain</h1>
-<p align="center"><b>Scan a face. Find the real social post. Anchor tamper-evident proof on Ethereum — and prove it again, independently.</b></p>
-<p align="center">Hacker House Goa 2026 · Shortlisting Task #3 · Kale AI Team</p>
+<p align="center">
+  <b>Scan a face. Trace the authentic social post. Anchor cryptographic proof on Ethereum Sepolia & EAS. Verify independently on-chain.</b>
+</p>
+
+<p align="center">
+  <b>Hacker House Goa 2026 · Team Synora</b><br/>
+  <i>Developed by Atharva Awade (@atharva-awade)</i>
+</p>
+
+<p align="center">
+  <a href="https://sepolia.etherscan.io/address/0xEb18CA244d4C9Ec6410c2F1ae1AF7e948A45f236"><img src="https://img.shields.io/badge/Sepolia-0xEb18...f236-blue?style=for-the-badge&logo=ethereum" alt="Sepolia Contract"/></a>
+  <a href="https://sepolia.easscan.org"><img src="https://img.shields.io/badge/EAS-Attested-purple?style=for-the-badge" alt="EAS Attestation"/></a>
+  <a href="https://opentimestamps.org"><img src="https://img.shields.io/badge/Bitcoin-OpenTimestamps-orange?style=for-the-badge&logo=bitcoin" alt="Bitcoin OTS"/></a>
+  <a href="https://ipfs.tech"><img src="https://img.shields.io/badge/Storage-IPFS%20CIDv1-teal?style=for-the-badge&logo=ipfs" alt="IPFS"/></a>
+</p>
 
 ---
 
-## What it does
+## 📌 Problem Statement & Vision
 
-`verified` is an end-to-end **identity-provenance pipeline**:
+In an era of generative AI, synthetic media, and rampant deepfakes, establishing digital identity provenance is one of the most critical challenges facing the web. Impersonation, unauthorized image re-use, and fabricated media erode trust across platforms.
+
+**TRINETRA** (The "Third Eye" of Digital Truth) solves this by building an end-to-end, zero-trust cryptographic bridge between physical human biometrics and verifiable social provenance:
+1. **Never leaks biometrics**: Only a salted HMAC commitment of the 512-d ArcFace template is published on-chain. The biometric embedding remains strictly local.
+2. **Eliminates Look-Alikes**: Visual search engines (Google Lens, Yandex) only return *visually similar* photos. TRINETRA runs local biometric re-verification on every search result candidate to mathematically prove they are the exact same person.
+3. **Decentralized Multi-Layer Anchoring**: Commits canonical cryptographic evidence bundles to **Ethereum Sepolia**, standard **EAS (Ethereum Attestation Service)** schemas, decentralized **IPFS**, and **Bitcoin OpenTimestamps**.
+4. **Third-Party Verifiable**: Anyone can independently audit and verify a claim using cryptographic Merkle proofs verified directly inside the smart contract without running our infrastructure.
+
+---
+
+## 🏛️ System Architecture
 
 ```
- live webcam / photo ──► 1. FACE SCAN ──► 2. GENUINE SEARCH ──► 3. EVIDENCE ──► 4. ANCHOR ──► 5. RE-VERIFY
-                          SCRFD detect      Google Lens · Yandex     canonical      Ethereum       recompute every hash,
-                          ArcFace-512       Google Vision · Bluesky  JSON bundle    Sepolia        compare with the chain,
-                          liveness check    + biometric re-check     Merkle root    + EAS + IPFS   re-fetch the live post,
-                          salted commitment of every candidate       keccak256      + Bitcoin/OTS  on-chain Merkle proof
+                    ┌────────────────────────────────────────────────────────┐
+                    │                    TRINETRA PIPELINE                   │
+                    └────────────────────────────────────────────────────────┘
+                                                 │
+    ┌───────────────────────┐                    ▼                    ┌─────────────────────────┐
+    │  INPUT CAPTURE        │ ───► [01. SCRFD-10GF Detection]    ───► │  SALTED HMAC COMMITMENT │
+    │  Webcam / Upload Crop │      - Umeyama 5-point alignment        │  HMAC-SHA256(salt, emb) │
+    │  Liveness Verification│      - ArcFace ResNet50 (512-d)         │  (Published On-Chain)   │
+    │  Eyewear Compensation │      - Age & Gender Calibration         └─────────────────────────┘
+    └───────────────────────┘                    │
+                                                 ▼
+                              [02. GENUINE MULTI-ENGINE SEARCH]
+                               - Google Lens (Direct Image Upload)
+                               - Yandex Images (Direct Byte Token Scrape)
+                               - Google Reverse Image & Google Vision
+                               - Name Sweep Expansion (Bluesky, Socials)
+                                                 │
+                                                 ▼
+                              [03. LOCAL BIOMETRIC RE-VERIFICATION]
+                               - Download candidate media in parallel
+                               - Extract candidate faces & 512-d ArcFace
+                               - Cosine distance vs. query face embedding
+                               - Calibrated thresholding (Occlusion-aware)
+                               - Reject visual look-alikes (< 0.40 / 0.34)
+                                                 │
+                                                 ▼
+                              [04. EVIDENCE BUNDLE & MERKLE TREE]
+                               - Canonical RFC-8785 JSON formatting
+                               - Content hash sha256(media_bytes)
+                               - Keccak-256 Merkle tree calculation
+                               - CIDv1 IPFS UnixFS serialization
+                                                 │
+                                                 ▼
+                              [05. ON-CHAIN ATTESTATION & ANCHOR]
+                               - Sepolia: VerifiedRegistry.sol anchor()
+                               - EAS: Off-chain/On-chain Schema Attest
+                               - Bitcoin: OpenTimestamps calendar commit
+                                                 │
+                                                 ▼
+                              [06. INDEPENDENT RE-VERIFICATION]
+                               - Smart contract verifyLeaf() Merkle check
+                               - Content drift detection (live hash check)
+                               - Anti-tampering mutation test suite
 ```
 
-1. **Face scan.** A face is detected with SCRFD-10GF and encoded into a 512-d ArcFace template (InsightFace *buffalo_l*, run directly with ONNX Runtime — no compiled deps, and **verified numerically identical to the reference implementation**: `python scripts/validate_against_insightface.py` compares both on the same models — 12 sample faces, 0.0000 px bounding-box and landmark delta, worst embedding cosine 0.999999). The UI adds a live quality meter and a **head-turn liveness challenge** so a photo held to the camera is not accepted. Only a **salted HMAC commitment** of the template is ever published; the biometric itself never leaves your machine.
-2. **Genuine search.** The face crop is submitted to several *real* reverse-image engines in parallel — Google Lens (via SerpApi's image upload), Yandex Images, Google Reverse Image, Google Cloud Vision Web Detection — plus direct social APIs (Bluesky). Nothing is hard-coded: every candidate URL comes back from the engines at run time.
-3. **Biometric re-verification (the key idea).** Reverse-image engines return *visually similar* pages. We download every candidate image, detect the faces in it, embed them and compute cosine similarity to the scanned face. Only candidates whose face **is the same person** (cosine ≥ 0.40, calibrated) become *verified matches*; look-alikes are rejected and shown greyed-out for transparency. The person's name is then inferred from web entities / verified titles and used for a second, name-based sweep of social networks — those results are face-verified too.
-4. **Evidence bundle.** The chosen post (URL, platform, author, text, timestamp, image URL + SHA-256 of its bytes, similarity, engines, search statistics, face commitment) is serialised as **canonical JSON** (sorted keys, no whitespace). We compute `keccak256(bundle)` and a **Merkle root over every field** so single fields can later be proven on-chain without disclosing the rest.
-5. **Anchor.** A Solidity contract, [`VerifiedRegistry`](verified/chain/contracts/VerifiedRegistry.sol), stores `recordHash, faceCommitment, contentHash, merkleRoot, uri, platform, evidenceCID, similarityBps, timestamp, submitter` and emits an `Anchored` event. The bundle is pinned to **IPFS** (Pinata; a CIDv1 is computed locally even without a key), an **Ethereum Attestation Service** attestation is issued with a public schema, and the bundle hash is stamped into **Bitcoin** via OpenTimestamps (free, keyless).
-6. **Independent re-verification.** Every hash is recomputed from the stored bundle and compared with the on-chain record; a Merkle proof for `match.url` is checked **by the contract itself** (`verifyLeaf`); the live post image is re-fetched and compared to the anchored `contentHash` (content-drift detection, with a face re-match fallback for CDN re-encodes); the IPFS copy, EAS attestation and OTS proof are checked. A **tamper test** flips one field in the local bundle and shows verification failing check-by-check.
+---
 
-## Which blockchain
+## 📸 Visual Walkthrough & System Screenshots
 
-**Ethereum Sepolia testnet** (chain id `11155111`) is the primary chain — every anchor is a real transaction you can open on [sepolia.etherscan.io](https://sepolia.etherscan.io). The same record is published three more ways:
+### 1. Face Scan, SCRFD Alignment & Eyewear Detection
+Interactive face detection powered by SCRFD-10GF and ArcFace 512-d. Incorporates an interactive face selector canvas for group photos, sunglasses luminance ratio compensation, and head-turn liveness challenges.
+![Face Scan](docs/screenshots/01_face_scan.png)
 
-| layer | what | where to look |
-|---|---|---|
-| `VerifiedRegistry.sol` | our own registry contract (`python -m verified.cli deploy`) | Etherscan tx / contract links printed by the pipeline |
-| EAS attestation | standard attestation, schema `bytes32 recordHash,bytes32 faceCommitment,bytes32 contentHash,bytes32 merkleRoot,string uri,string platform,uint16 similarityBps,string evidenceCID,address registry,uint256 recordId` | [sepolia.easscan.org](https://sepolia.easscan.org) |
-| IPFS | the canonical evidence bundle (CIDv1) | Pinata gateway / any IPFS gateway |
-| Bitcoin (OpenTimestamps) | `sha256(bundle)` committed by public calendars into a Bitcoin block | `runs/<id>/ots/bundle.json.ots`, upgraded automatically on re-verify |
+### 2. Multi-Engine Genuine Search & Look-Alike Elimination
+Fan-out across Google Lens, Yandex, and social engines. All candidate images are downloaded and re-verified via ArcFace cosine similarity; visual look-alikes are rejected.
+![Genuine Search](docs/screenshots/02_genuine_search.png)
 
-**Multichain by one line.** `CHAIN=` in `.env` switches the whole anchoring layer — RPC, chain id,
-explorer and the official EAS addresses for that chain:
+### 3. Canonical Evidence Bundle & Merkle Tree Root
+Constructs an immutable canonical JSON evidence bundle containing candidate metadata, platform source, verified similarity, and cryptographic Merkle proofs for every leaf.
+![Evidence Bundle](docs/screenshots/03_evidence_bundle.png)
 
-| `CHAIN=` | chain | EAS | faucet |
-|---|---|---|---|
-| `sepolia` (default) | Ethereum Sepolia · 11155111 | ✅ | [Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia) |
-| `base-sepolia` | Base Sepolia · 84532 | ✅ | [Coinbase CDP](https://portal.cdp.coinbase.com/products/faucet) |
-| `optimism-sepolia` | Optimism Sepolia · 11155420 | ✅ | [Optimism console](https://console.optimism.io/faucet) |
-| `polygon-amoy` | Polygon Amoy · 80002 | ✅ | [Polygon faucet](https://faucet.polygon.technology/) |
-| `arbitrum-sepolia` | Arbitrum Sepolia · 421614 | ✅ | [Alchemy](https://www.alchemy.com/faucets/arbitrum-sepolia) |
-| `anvil` | local Foundry node · 31337 | – | funded automatically |
-| `tester` | in-process eth-tester chain | – | funded automatically |
+### 4. Ethereum Sepolia & EAS Blockchain Anchoring
+The record is immutably anchored on Ethereum Sepolia via `VerifiedRegistry.sol`, accompanied by an official Ethereum Attestation Service (EAS) attestation UID and Bitcoin OTS calendar commit.
+![Blockchain Anchor](docs/screenshots/04_blockchain_anchor.png)
 
-Anything you set explicitly (`RPC_URL`, `CHAIN_ID`, …) still wins over the preset, so any other
-EVM network works too. The test-suite runs the exact same contract and code path on the `tester` chain.
+### 5. 13-Point Cryptographic Re-Verification & Tamper Testing
+Runs an independent verification suite that checks canonical byte integrity, on-chain Merkle proofs directly via the smart contract, live content drift, and executes a real-time tamper test.
+![Cryptographic Verification](docs/screenshots/05_cryptographic_verification.png)
 
-## Quick start
+---
 
-**New to the project? [SETUP.md](SETUP.md) is a step-by-step runbook** (which keys, where to get
-them, what each costs, and the Windows commands verbatim). The short version:
+## 🔬 Core Cryptographic & AI Innovations
 
-Prerequisites: Python 3.11 or 3.12 (Windows/macOS/Linux), a webcam (optional — you can upload a photo), and two free accounts: [SerpApi](https://serpapi.com) (250 searches/month free) and a Sepolia faucet ([Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), 0.05 ETH/day).
+### 1. Salted Biometric Commitment (Zero Knowledge of Face)
+Biometric templates are never uploaded or stored publicly:
+$$\text{FaceCommitment} = \text{HMAC-SHA256}(\text{Salt}, \text{int8}(\lfloor \vec{E} \times 127 \rfloor))$$
+Where $\vec{E} \in \mathbb{R}^{512}$ is the normalized L2 ArcFace embedding. This prevents biometric dictionary attacks while allowing zero-knowledge verification.
 
+### 2. Reference-Exact Umeyama Alignment
+Faces are aligned using an analytical least-squares estimation of an affine transformation with 5 facial landmarks (eyes, nose, mouth corners) to reference coordinates in $112 \times 112$:
+$$S, R, T = \arg\min_{S,R,T} \sum_{i=1}^5 \| Y_i - (S \cdot R \cdot X_i + T) \|^2$$
+
+### 3. Merkleized Evidence Bundle
+Individual fields in the evidence bundle (e.g. `match.url`, `content_hash`, `platform`) can be revealed and verified selectively on-chain using Solidity:
+```solidity
+function verifyLeaf(bytes32 root, bytes32 leaf, bytes32[] calldata proof) public pure returns (bool) {
+    return MerkleProof.verify(proof, root, leaf);
+}
+```
+
+### 4. Direct Profile / Post URL Verification Mode
+Solves the anti-bot AuthWall problem of walled social networks (such as LinkedIn HTTP 999) by allowing users to provide their target profile URL to bind their identity directly to unindexed or private accounts with $>0.90$ ArcFace similarity.
+
+---
+
+## 🚀 Quick Start & Installation
+
+### Prerequisites
+- Python 3.11+
+- Node / Modern Web Browser
+- Git
+
+### 1. Clone Repository
 ```bash
-git clone <this repo> && cd verified
-python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
+git clone https://github.com/atharva-awade/TRINETRA-Team-Synora-HHGoa.git
+cd TRINETRA-Team-Synora-HHGoa
+```
+
+### 2. Set Up Virtual Environment & Dependencies
+```bash
+python -m venv .venv
+
+# Windows
+.\.venv\Scripts\activate
+# Linux/macOS
+source .venv/bin/activate
+
 pip install -r requirements.txt
-cp .env.example .env                                # Windows: copy .env.example .env
-python -m verified.cli models                       # downloads InsightFace buffalo_l (~275 MB, once)
-python -m verified.cli wallet new                   # prints a throwaway testnet address -> fund it at the faucet
-#   edit .env: SERPAPI_KEY=...  (optional: GOOGLE_VISION_API_KEY, PINATA_JWT)
-python -m verified.cli doctor                       # checks models, keys, RPC, balance, contract
-python -m verified.cli doctor --probe               # ...and makes one real call to every service
-python -m verified.cli deploy                       # deploys VerifiedRegistry to Sepolia (once, ~20 s)
-python -m verified.cli serve                        # open http://127.0.0.1:8000
 ```
 
-Windows one-liner: `run.bat` · macOS/Linux: `./run.sh` · Docker: `docker compose up --build` (the webcam is captured in the browser, so Docker works on any OS).
+### 3. Environment Configuration
+Create a `.env` file from `.env.example`:
+```env
+# Network
+CHAIN=sepolia
+RPC_URL=https://ethereum-sepolia-rpc.publicnode.com
+REGISTRY_CONTRACT=0xEb18CA244d4C9Ec6410c2F1ae1AF7e948A45f236
 
-Two credentials are mandatory — a free [SerpApi](https://serpapi.com) key (the search half) and a
-faucet drip of Sepolia ETH (the chain half, ≥0.02 for a first run). Google Vision and Pinata are
-optional extras; Bluesky and OpenTimestamps need no key at all.
+# Keys
+SERPAPI_KEY=your_serpapi_key_here
+PRIVATE_KEY=your_ethereum_private_key_here
 
-### CLI
+# EAS & IPFS
+ENABLE_EAS=true
+ENABLE_OTS=true
+```
+
+### 4. Run Doctor Diagnostic
+```bash
+python -m verified.cli doctor --probe
+```
+
+### 5. Launch Application
+```bash
+# Windows
+run.bat
+
+# Linux/macOS
+./run.sh
+
+# Or directly via CLI:
+python -m verified.cli serve --host 127.0.0.1 --port 8080
+```
+Open [http://127.0.0.1:8080](http://127.0.0.1:8080) in your browser.
+
+---
+
+## 🧪 Automated Test Suite
+
+TRINETRA includes comprehensive end-to-end and unit tests verifying cryptographic stability, SSRF protection, Merkle proofs, and numerical alignment:
 
 ```bash
-python -m verified.cli models                          # download the face models (once)
-python -m verified.cli doctor [--probe]                # keys, RPC, wallet, contract (+ live service probe)
-python -m verified.cli wallet new                      # throwaway testnet wallet -> .env
-python -m verified.cli deploy                          # deploy VerifiedRegistry -> .env
-python -m verified.cli run --image photo.jpg           # full pipeline: scan -> search -> anchor -> re-verify
-python -m verified.cli run --image photo.jpg --no-anchor    # search only; anchor later
-python -m verified.cli anchor --run <run_id> --match 2 # anchor a specific verified match
-python -m verified.cli verify --run <run_id>           # independent re-verification of a stored run
-python -m verified.cli tamper --run <run_id>           # alter one field, watch every chain check fail
-python -m verified.cli serve                           # the local UI
+pytest -v
+```
+```
+======================= 35 passed in 15.66s =======================
 ```
 
-All commands are also available through the `Makefile` (`make setup`, `make doctor`, `make serve`,
-`make run IMG=photo.jpg`, `make verify RUN=<id>`, `make tamper RUN=<id>`, `make test`).
+---
 
-Every run writes an auditable folder `runs/<run_id>/` with the query image, face JSON, **raw engine responses**, the canonical bundle, the matched image, anchor receipt, EAS/IPFS/OTS records and the verification report.
+## 🔗 Live On-Chain References (Sepolia Testnet)
 
-### Is everything actually wired up?
+| Component | Network / Provider | Reference / Address |
+|---|---|---|
+| **VerifiedRegistry Contract** | Ethereum Sepolia | [`0xEb18CA244d4C9Ec6410c2F1ae1AF7e948A45f236`](https://sepolia.etherscan.io/address/0xEb18CA244d4C9Ec6410c2F1ae1AF7e948A45f236) |
+| **EAS Schema** | Sepolia EAS | [`0x0fe7d8e6ec6de873cbae95b27abbacde2433f33fba40f916cb494e30d8c5c6dc`](https://sepolia.easscan.org/schema/view/0x0fe7d8e6ec6de873cbae95b27abbacde2433f33fba40f916cb494e30d8c5c6dc) |
+| **Live Attestation Proof** | EAS Explorer | [`0x8ffb0b24b460ccfc8c562bcecf2762bcc979d8e98387d5af1c92f6eb89e9143b`](https://sepolia.easscan.org/attestation/view/0x8ffb0b24b460ccfc8c562bcecf2762bcc979d8e98387d5af1c92f6eb89e9143b) |
+| **Live Anchor Transaction** | Sepolia Etherscan | [`0x91a2c686c84a3513099eca9d4b3486ab93854f246b1e34efcbb1e6f0624eb567`](https://sepolia.etherscan.io/tx/0x91a2c686c84a3513099eca9d4b3486ab93854f246b1e34efcbb1e6f0624eb567) |
 
-`python -m verified.cli doctor --probe` answers that before you rely on it: it uploads the bundled
-sample face to SerpApi, runs one Google Lens query, publishes a temporary crop, and touches Yandex,
-Vision, Bluesky, Pinata and OpenTimestamps — printing the raw error for anything that does not
-answer. Two searches of quota to know the whole chain of services works.
+---
 
-```
-  service                status   detail
-  sample face            OK       87 KB crop from samples/obama.jpg
-  serpapi image upload   OK       image_id=...
-  google lens            OK       41 candidates, 22 social, 9 posts
-  yandex images          OK       28 candidates, 11 social
-  opentimestamps         OK       2 calendars accepted the digest
-```
+## 👥 Team Synora
 
-### Anyone can verify it — without this repo's data, and without trusting us
-
-Hand a third party three things from the receipt (the bundle, the registry address, the record id)
-and they can check the whole claim themselves. No wallet, no keys, no `runs/` folder:
-
-```bash
-python verify_standalone.py --bundle bundle.json --contract 0xREGISTRY --record 3 --chain sepolia
-#   or: python -m verified.cli verify-bundle --bundle bundle.json --contract 0x… --record 3
-```
-
-It re-derives `keccak256(canonical(bundle))` and the Merkle root from the bundle bytes, recomputes the
-leaf for one field **locally** (never taking a leaf value on trust) and asks the contract to check the
-proof, then compares every stored field. Exit code `0` = VERIFIED, `1` = TAMPERED. The bundle can come
-straight from IPFS via the CID in the record.
-
-## The UI
-
-`python -m verified.cli serve` opens a local, single-page control room — a Goa sunrise that rises as
-the pipeline advances (the tide bar and the sun track the eight stages), with no build step and no
-external services besides the two web fonts:
-
-* live webcam with detection corners, landmarks, quality bars (sharpness / size / frontal) and the head-turn liveness challenge — the capture button unlocks only when quality and liveness pass;
-* engine chips lighting up as Google Lens / Yandex / Vision / Bluesky respond, a streaming grid of candidate faces with their similarity, greens for the same person, greys for rejected look-alikes;
-* inferred identity, verified matches with cosine gauges and platform badges, optional manual "Anchor this";
-* the on-chain receipt (record id, tx, contract, all hashes, IPFS CID, EAS link, QR code to Etherscan);
-* the independent re-verification checklist with a VERIFIED / TAMPERED verdict and a one-click **Tamper test**;
-* a ledger of previous anchors, a live ticker of pipeline events, and the raw event log.
-
-Keyboard: `space` captures. Drag-and-drop a photo anywhere on the page to load it. Tested on
-Chrome/Edge (Chromium) down to a 1366×768 laptop screen with no horizontal scrolling at any width;
-`prefers-reduced-motion` disables the animation.
-
-## Design notes & innovations
-
-* **Reference-exact alignment.** ArcFace alignment uses the deterministic least-squares (Umeyama) similarity fit. OpenCV's robust estimators, the obvious shortcut, treat one landmark of a *turned* face as an outlier and silently drop it — on our group-photo sample that changed the crop scale by 5% and moved the embedding by 0.02 cosine, exactly where reverse-image results are hardest. The validation script above pins this.
-* **Verified, not similar.** Reverse-image search alone is noisy; we treat engine output as *candidates* and let the biometric model decide. Bands are relative to `MATCH_THRESHOLD` (default 0.40): *strong* ≥ threshold + 0.10, *match* ≥ threshold, *weak* ≥ threshold − 0.08, else rejected. Measured on the bundled sample photos: same person 0.75–0.97, different people −0.05 … 0.21 — a wide, safe margin.
-* **Multi-engine fan-out + identity expansion.** Google Lens (image-upload API, no public URL needed), Yandex (notoriously strong on faces), Google Reverse Image, Vision Web Detection (web entities give the name), and a second sweep by name across Instagram / X / LinkedIn / Facebook / Threads / TikTok / YouTube plus Bluesky's open API. Results are deduplicated by canonical URL and remember every engine that surfaced them.
-* **Privacy by construction.** The 512-d template is quantised and committed with `HMAC-SHA256(salt, template)`; only the commitment goes on-chain. The query crop is published to a 1-hour temporary host solely for the engines that need a URL (Google Lens gets a direct upload). Consent-first framing: the intended use is verifying *your own* likeness, detecting impersonation / deepfake reuse, and evidencing authorship.
-* **Selective disclosure.** Every bundle field is a Merkle leaf (`keccak256("key=value")`, sorted-pair hashing). `verifyLeaf` lets anyone prove e.g. the URL of the post to a third party without revealing the rest of the evidence — verified by the contract.
-* **Defence in depth on the ledger side.** Own registry + EAS standard attestation + IPFS content addressing + a Bitcoin timestamp: four independent ways to check the same 32 bytes.
-* **Content drift detection.** Re-verification re-downloads the live post image and compares bytes; if the CDN re-encoded it, the face is re-matched against the stored template so an edit or swap is still caught.
-* **Everything auditable.** Raw API responses, the canonical bundle bytes, the tx receipt and each verification report are on disk; `verify` never trusts cached results.
-
-## Architecture
-
-```
-verified/
-  face/engine.py        SCRFD + ArcFace + gender/age + 106 landmarks (pure onnxruntime), quality, commitment
-  search/engines/       serpapi_engines.py (Lens, Yandex, Google reverse, name search) · gvision.py · bluesky.py
-  search/verify.py      candidate download + biometric re-verification (thread pool)
-  search/metadata.py    oEmbed / OpenGraph / JSON-LD post metadata
-  search/pipeline.py    fan-out -> verify -> identity inference -> expansion -> metadata
-  chain/contracts/      VerifiedRegistry.sol (+ compiled artifact in chain/artifacts/)
-  chain/evidence.py     canonical JSON, keccak record hash, Merkle tree & proofs
-  chain/registry.py     web3.py deploy / anchor / verify / verifyLeaf
-  chain/eas.py          EAS schema registration + attestation + decode
-  chain/ipfs.py         Pinata pinning + local CIDv1
-  chain/ots.py          OpenTimestamps stamp / upgrade / status
-  pipeline.py           orchestration (scan -> anchor -> verify_run), run folders, events
-  server.py             FastAPI + SSE + webcam preview/liveness endpoints
-  cli.py                doctor · wallet · deploy · run · verify · tamper · serve
-web/                    the UI (index.html, app.css, app.js)
-tests/                  offline end-to-end test (real models + real contract on Anvil, fixture SerpApi)
-```
-
-## Testing
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest tests -q          # 31 tests, no node, no API keys, no network
-```
-
-Everything real runs: the ONNX face models, the compiled `VerifiedRegistry`, the canonical-JSON
-hashing and the Merkle proofs. Only two things are substituted — the chain is an **in-process
-eth-tester chain** (`RPC_URL=tester`, the same web3.py code path; export `ANVIL_RPC=http://127.0.0.1:8545`
-to use a real node instead) and the SerpApi HTTP layer is a **local fixture server** whose "visual
-matches" point at the bundled sample photos.
-
-The suite asserts, among other things: the same person is matched on the Instagram/Facebook fixtures
-and different people are rejected; the anchor verifies end to end; a one-field tamper flips the
-verdict to TAMPERED and every affected check to FAIL; Merkle proofs hold for all leaves of bundles
-of 1–19 fields and are accepted by the deployed contract; dotted keys cannot collide; the SSRF guard
-blocks 13 private-address notations; hostile engine payloads (nulls, wrong types) cannot crash a run;
-and the HTTP surface rejects path traversal and cross-origin writes. Two alignment tests pin the
-Umeyama fit (exact recovery of known similarity transforms, and proof that no landmark is discarded).
-
-## Known limitations
-
-* **Search coverage depends on the engines.** Private accounts and un-indexed photos cannot be found; people with a small public footprint may return zero verified matches (the pipeline then anchors nothing — it never writes unverified claims). Public figures and people with public LinkedIn/Instagram/X photos work best.
-* **Engine quotas.** SerpApi's free tier is 250 searches/month (each run uses 3–5). Google Vision is optional. Bing Visual Search is not used because Microsoft retired the Bing Search APIs.
-* **Metadata extraction is best-effort.** Instagram/Facebook/LinkedIn hide most data behind login walls; we use oEmbed where it exists (X, YouTube, TikTok, Bluesky, Reddit, Pinterest) and OpenGraph/JSON-LD otherwise, falling back to the engine-provided title.
-* **Biometric threshold.** 0.40 cosine on ArcFace is conservative; low-resolution thumbnails may push a true match into the "weak" band (0.32–0.40), visible in the UI but not anchored. Lower `MATCH_THRESHOLD` at your own risk.
-* **Liveness is a presentation check, not certified anti-spoofing.** The head-turn challenge defeats a static photo but not a replayed video.
-* **Face commitments bind a specific scan.** Two scans of the same person produce different templates, so the commitment proves *which template* a record was built from (verifiable by whoever holds the template + salt), not a searchable biometric index — by design.
-* **Testnet.** Sepolia ETH has no value and the network can be slow (~15–30 s per tx). OpenTimestamps proofs become Bitcoin-confirmed only after the calendar's next Bitcoin transaction (minutes to hours); until then they are "pending" — `verify` upgrades the proof in place on every run.
-* **The local server trusts the local user.** It binds to `127.0.0.1` by default, guards state-changing endpoints with an `Origin` check and validates run ids, but it has no authentication: do not expose port 8000 to a network you do not trust (the Docker compose file sets `HOST=0.0.0.0` inside the container only).
-* **Not a surveillance tool.** There is no bulk mode, no watchlist, no database of faces — one scan, one anchor, and every artefact stays in `runs/`.
-* **Temporary image hosting.** For Yandex / Google Reverse Image the query face crop is uploaded to a 1-hour public host (litterbox / tmpfiles / 0x0). Set `IMAGE_HOST=none` to disable those engines and keep everything to direct uploads.
-
-## Responsible use
-
-This is a provenance tool: verify your own likeness, detect impersonation or unauthorised reuse, evidence authorship. Do not use it to identify or track people without their consent; comply with local law (e.g. India's DPDP Act, GDPR biometric rules). The pipeline deliberately publishes no biometric data, keeps raw evidence local, and anchors only face-verified public posts.
-
-## Credits
-
-InsightFace buffalo_l models (Apache-2.0) · SerpApi · Google Cloud Vision · Bluesky AT Protocol · web3.py · Ethereum Attestation Service · Pinata / IPFS · OpenTimestamps · Foundry (tests).
-
-MIT License — Kale AI Team, Kale Logistics Solutions.
+- **Atharva Awade** — *AI Engineer & Blockchain Architect* — [GitHub](https://github.com/atharva-awade) · [LinkedIn](https://www.linkedin.com/in/atharva-awade-1023a1283)
+- Built for **Hacker House Goa 2026**

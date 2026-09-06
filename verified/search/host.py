@@ -32,6 +32,7 @@ def _litterbox(data: bytes, filename: str) -> str:
 
 
 def _tmpfiles(data: bytes, filename: str) -> str:
+    import re
     r = httpx.post(
         "https://tmpfiles.org/api/v1/upload",
         files={"file": (filename, data, "image/jpeg")},
@@ -39,9 +40,16 @@ def _tmpfiles(data: bytes, filename: str) -> str:
         timeout=60,
     )
     r.raise_for_status()
-    url = r.json()["data"]["url"]
-    # direct-download form: https://tmpfiles.org/dl/<id>/<name>
-    return url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/", 1)
+    page_url = r.json()["data"]["url"]
+    try:
+        r_page = httpx.get(page_url, headers={"User-Agent": UA}, timeout=30)
+        m = re.search(r'href=["\'](https://tmpfiles\.org/dl/[^"\']+)["\']', r_page.text)
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    # fallback to standard format
+    return page_url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/", 1)
 
 
 def _0x0(data: bytes, filename: str) -> str:

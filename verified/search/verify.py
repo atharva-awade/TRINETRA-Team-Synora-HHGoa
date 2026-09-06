@@ -90,7 +90,14 @@ def safe_client(**kwargs) -> httpx.Client:
 
 
 def fetch_image(url: str, timeout: float = 10) -> bytes | None:
-    if not url or not url.startswith("http"):
+    if not url:
+        return None
+    if url.startswith("data:image"):
+        try:
+            return base64.b64decode(url.split(",", 1)[1])
+        except Exception:  # noqa: BLE001
+            return None
+    if not url.startswith("http"):
         return None
     if not _ALLOW_LOCAL and _is_private_host(url):
         return None
@@ -137,7 +144,7 @@ def _b64_jpeg(img: np.ndarray, max_side: int = 160) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode() if ok else ""
 
 
-def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate, threshold: float = 0.40) -> VerifiedMatch | None:
+def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate, threshold: float = 0.40, occluded: bool = False) -> VerifiedMatch | None:
     """Download the candidate image(s) and compute the best face similarity."""
     tried = []
     for url in [u for u in (cand.image, cand.thumbnail) if u]:
@@ -165,7 +172,7 @@ def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate,
         return VerifiedMatch(
             candidate=cand,
             similarity=best,
-            band=similarity_band(best, threshold),
+            band=similarity_band(best, threshold, occluded=occluded),
             face_bbox=[float(v) for v in best_face.bbox],
             candidate_faces=len(faces),
             image_used=url,
@@ -175,13 +182,13 @@ def verify_candidate(engine: FaceEngine, query_emb: np.ndarray, cand: Candidate,
     return None
 
 
-def verify_all(engine: FaceEngine, query_emb: np.ndarray, candidates: list[Candidate], workers: int = 6, on_progress=None, threshold: float = 0.40) -> list[VerifiedMatch]:
+def verify_all(engine: FaceEngine, query_emb: np.ndarray, candidates: list[Candidate], workers: int = 6, on_progress=None, threshold: float = 0.40, occluded: bool = False) -> list[VerifiedMatch]:
     """Verify candidates concurrently (network-bound); inference is serialised
     per ONNX session so we keep a modest pool."""
     results: list[VerifiedMatch] = []
     done = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(verify_candidate, engine, query_emb, c, threshold): c for c in candidates}
+        futs = {ex.submit(verify_candidate, engine, query_emb, c, threshold, occluded): c for c in candidates}
         for fut in as_completed(futs):
             done += 1
             try:

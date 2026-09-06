@@ -126,23 +126,46 @@ def yandex_reverse(api_key: str, image_url: str) -> tuple[list[Candidate], dict]
         else:
             raise
     out: list[Candidate] = []
-    for i, m in enumerate(data.get("images_results", []) or []):
+    results = data.get("image_results") or data.get("images_results") or []
+    for i, m in enumerate(results):
         link = m.get("link") or ""
         if not link:
             continue
+        thumb = m.get("thumbnail")
+        if isinstance(thumb, dict):
+            thumb = thumb.get("link")
+        orig = m.get("original_image")
+        if isinstance(orig, dict):
+            orig = orig.get("link")
         out.append(
             Candidate(
                 engine="yandex",
                 title=str(m.get("title") or ""),
                 link=link,
-                source=m.get("source", "") or "",
-                thumbnail=m.get("thumbnail", "") or "",
-                image=m.get("original", "") or "",
-                snippet=m.get("snippet", "") or "",
-                posted_at=m.get("posted_at", "") or "",
+                source=str(m.get("source") or ""),
+                thumbnail=str(thumb or ""),
+                image=str(orig or m.get("original") or ""),
+                snippet=str(m.get("snippet") or ""),
+                posted_at=str(m.get("posted_at") or ""),
                 position=_pos(m, i),
             )
         )
+    for i, s in enumerate(data.get("similar_images") or []):
+        link = s.get("link") or ""
+        img_dict = s.get("image") or {}
+        img_url = img_dict.get("link") if isinstance(img_dict, dict) else str(img_dict or "")
+        if link and img_url:
+            out.append(
+                Candidate(
+                    engine="yandex_similar",
+                    title="Yandex Visual Match",
+                    link=link,
+                    source="yandex",
+                    thumbnail=img_url,
+                    image=img_url,
+                    position=len(results) + i + 1,
+                )
+            )
     return out, data
 
 

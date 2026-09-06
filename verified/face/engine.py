@@ -44,7 +44,10 @@ class Face:
     kps: np.ndarray  # (5, 2) landmarks
     embedding: np.ndarray | None = None  # L2-normalised 512-d
     age: int | None = None
+    age_range: list[int] | None = None
     gender: str | None = None
+    has_sunglasses: bool = False
+    occlusion: dict = field(default_factory=dict)
     quality: dict = field(default_factory=dict)
     landmarks106: np.ndarray | None = None
 
@@ -62,7 +65,10 @@ class Face:
             "det_score": round(self.score, 4),
             "kps": [[round(float(x), 1), round(float(y), 1)] for x, y in self.kps],
             "age": self.age,
+            "age_range": self.age_range,
             "gender": self.gender,
+            "has_sunglasses": self.has_sunglasses,
+            "occlusion": self.occlusion,
             "quality": self.quality,
         }
 
@@ -261,6 +267,44 @@ class FaceEngine:
         return face.embedding
 
     # ------------------------------------------------------------- attributes
+    def detect_sunglasses(self, img: np.ndarray, face: Face) -> tuple[bool, dict]:
+        """Detect dark sunglasses or heavy eye occlusion."""
+        le, re = face.kps[0], face.kps[1]
+        eye_dist = np.linalg.norm(re - le)
+        r = max(4, int(eye_dist * 0.25))
+
+        x1_l, y1_l = max(0, int(le[0] - r)), max(0, int(le[1] - r))
+        x2_l, y2_l = min(img.shape[1], int(le[0] + r)), min(img.shape[0], int(le[1] + r))
+        patch_l = img[y1_l:y2_l, x1_l:x2_l]
+
+        x1_r, y1_r = max(0, int(re[0] - r)), max(0, int(re[1] - r))
+        x2_r, y2_r = min(img.shape[1], int(re[0] + r)), min(img.shape[0], int(re[1] + r))
+        patch_r = img[y1_r:y2_r, x1_r:x2_r]
+
+        nose = face.kps[2]
+        x1_c, y1_c = max(0, int(nose[0] - r)), max(0, int(nose[1] - r))
+        x2_c, y2_c = min(img.shape[1], int(nose[0] + r)), min(img.shape[0], int(nose[1] + r))
+        patch_c = img[y1_c:y2_c, x1_c:x2_c]
+
+        if patch_l.size == 0 or patch_r.size == 0 or patch_c.size == 0:
+            return False, {}
+
+        gray_l = cv2.cvtColor(patch_l, cv2.COLOR_BGR2GRAY)
+        gray_r = cv2.cvtColor(patch_r, cv2.COLOR_BGR2GRAY)
+        gray_c = cv2.cvtColor(patch_c, cv2.COLOR_BGR2GRAY)
+
+        eye_brightness = float((gray_l.mean() + gray_r.mean()) / 2.0)
+        face_brightness = float(gray_c.mean()) + 1e-5
+        ratio = float(eye_brightness / face_brightness)
+
+        has_sunglasses = (eye_brightness < 70.0) or (ratio < 0.62 and eye_brightness < 105.0)
+        return has_sunglasses, {
+            "eye_brightness": round(eye_brightness, 1),
+            "face_brightness": round(face_brightness, 1),
+            "brightness_ratio": round(ratio, 2),
+            "has_sunglasses": has_sunglasses,
+        }
+
     def attributes(self, img: np.ndarray, face: Face) -> None:
         w, h = face.width, face.height
         center = ((face.bbox[0] + face.bbox[2]) / 2, (face.bbox[1] + face.bbox[3]) / 2)
@@ -269,7 +313,17 @@ class FaceEngine:
         blob = cv2.dnn.blobFromImage(crop, 1.0, (96, 96), (0, 0, 0), swapRB=True)
         out = self.ga.run(None, {self.ga.get_inputs()[0].name: blob})[0][0]
         face.gender = "male" if int(np.argmax(out[:2])) == 1 else "female"
-        face.age = int(np.round(out[2] * 100))
+        raw_age = float(out[2] * 100)
+
+        # Calibrate for sunglasses/occlusion bias
+        if face.has_sunglasses and raw_age > 28:
+            calibrated_age = int(round(raw_age - 11))
+        else:
+            calibrated_age = int(round(raw_age))
+
+        face.age = max(16, min(95, calibrated_age))
+        spread = 4 if not face.has_sunglasses else 5
+        face.age_range = [max(16, face.age - spread), min(95, face.age + spread)]
 
     def landmarks(self, img: np.ndarray, face: Face) -> np.ndarray:
         w, h = face.width, face.height
@@ -308,7 +362,13 @@ class FaceEngine:
         yaw = abs(nose[0] - eye_mid[0]) / eye_dist  # 0 frontal, ~0.5 strongly turned
         frontal_s = max(0.0, 1.0 - yaw * 2)
         roll = math.degrees(math.atan2(re[1] - le[1], re[0] - le[0]))
+        has_sg, occ_dict = self.detect_sunglasses(img, face)
+        face.has_sunglasses = has_sg
+        face.occlusion = occ_dict
         overall = 0.35 * sharp_s + 0.25 * size_s + 0.15 * bright_s + 0.25 * frontal_s
+        hints = []
+        if has_sg:
+            hints.append("sunglasses / eyewear detected")
         face.quality = {
             "overall": round(float(overall), 3),
             "sharpness": round(float(sharp_s), 3),
@@ -318,6 +378,8 @@ class FaceEngine:
             "yaw_ratio": round(float(yaw), 3),
             "roll_deg": round(float(roll), 1),
             "det_score": round(float(face.score), 3),
+            "has_sunglasses": has_sg,
+            "hints": hints,
         }
         return face.quality
 
@@ -363,13 +425,14 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / ((np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9))
 
 
-def similarity_band(sim: float, threshold: float = THRESH_MATCH) -> str:
-    """Band relative to the configured match threshold (default 0.40)."""
-    if sim >= threshold + 0.10:
+def similarity_band(sim: float, threshold: float = THRESH_MATCH, occluded: bool = False) -> str:
+    """Band relative to the configured match threshold (default 0.40, with occlusion tolerance)."""
+    eff_thresh = max(0.30, threshold - (0.06 if occluded else 0.0))
+    if sim >= eff_thresh + 0.10:
         return "strong"
-    if sim >= threshold:
+    if sim >= eff_thresh:
         return "match"
-    if sim >= threshold - 0.08:
+    if sim >= eff_thresh - 0.06:
         return "weak"
     return "reject"
 
@@ -396,11 +459,17 @@ def crop_face(img: np.ndarray, face: Face, margin: float = 0.35) -> np.ndarray:
     return img[y1:y2, x1:x2]
 
 
-def draw_faces(img: np.ndarray, faces: Iterable[Face]) -> np.ndarray:
+def draw_faces(img: np.ndarray, faces: Iterable[Face], selected_index: int = 0) -> np.ndarray:
     out = img.copy()
-    for f in faces:
+    faces_list = list(faces)
+    for i, f in enumerate(faces_list):
         x1, y1, x2, y2 = [int(v) for v in f.bbox]
-        cv2.rectangle(out, (x1, y1), (x2, y2), (86, 219, 255), 2)
+        is_sel = (i == selected_index)
+        color = (71, 179, 255) if is_sel else (180, 200, 220)
+        thickness = 3 if is_sel else 1
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness)
+        lbl = f"#{i+1}" + (" TARGET" if is_sel else "")
+        cv2.putText(out, lbl, (x1, max(18, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
         for x, y in f.kps:
-            cv2.circle(out, (int(x), int(y)), 2, (255, 150, 60), -1)
+            cv2.circle(out, (int(x), int(y)), 2, (255, 150, 60) if is_sel else (120, 140, 160), -1)
     return out

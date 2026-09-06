@@ -436,8 +436,6 @@ def _print_matches(matches: list[dict]) -> None:
     for i, m in enumerate(matches[:15]):
         t.add_row(str(i), f"{m['similarity']:.3f}", m["band"], esc(m["platform"]), "✓" if m["is_post"] else "", ",".join(e.replace("google_", "g_") for e in m["engines"]), esc(m["link"][:70]))
     console.print(t)
-    if probe:
-        _probe(s)
 
 
 def _probe(s: Settings) -> None:

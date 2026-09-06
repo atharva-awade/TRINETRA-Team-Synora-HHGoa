@@ -94,13 +94,23 @@
             <div class="hint" id="hint">looking for a face…</div>
           </div>
         </div>
+        <button class="btn ghost sm" id="btn-change-photo" hidden style="position: absolute; top: 12px; right: 12px; z-index: 5; background: rgba(11, 16, 36, 0.85); backdrop-filter: blur(8px);">↺ Upload different photo</button>
         <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
       </div>
       <div class="scan-side">
         <div class="card soft">
           <h3>capture</h3>
-          <p class="muted">the face is detected with SCRFD-10GF and encoded to a 512-d ArcFace template. only a salted HMAC commitment of the template is ever published — never the biometric.</p>
+          <div class="field" style="margin: 12px 0;">
+            <label style="display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--cyan); margin-bottom: 5px;">
+              Target Profile / Post URL (optional)
+            </label>
+            <input type="text" id="target-url" placeholder="e.g. https://www.linkedin.com/in/atharva-awade-1023a1283" style="width: 100%; box-sizing: border-box; background: rgba(11, 16, 36, 0.7); border: 1px solid var(--line2); border-radius: 8px; padding: 9px 12px; color: var(--text); font-size: 13px; font-family: monospace;" />
+            <small style="display: block; color: var(--muted); font-size: 11px; margin-top: 4px;">
+              Unindexed profile or private account? Enter the URL to verify directly against it.
+            </small>
+          </div>
           <button class="btn primary big glow" id="btn-capture" disabled>capture &amp; search</button>
+          <button class="btn ghost big" id="btn-reset-scan" hidden style="margin-top: 8px;">↺ Upload another photo</button>
           <button class="btn ghost" id="btn-stop" hidden>stop camera</button>
         </div>
         <div class="card soft" id="face-card" hidden>
@@ -115,6 +125,10 @@
               <div><span>template</span><b>512-d · L2 = 1.000</b></div>
             </div>
           </div>
+          <div class="face-picker" id="face-picker" hidden>
+            <div class="picker-label">multiple faces detected — click to select target:</div>
+            <div class="face-chips" id="face-chips"></div>
+          </div>
           <div class="hash"><span>face commitment · HMAC-SHA256(salt, int8(template))</span><code id="f-commit">–</code></div>
         </div>
       </div>
@@ -125,6 +139,9 @@
   <section class="panel" id="panel-search" hidden>
     <div class="panel-head">
       <h2><span class="num">02</span> genuine search <span class="sub" id="search-sub"></span></h2>
+      <div class="actions">
+        <button class="btn ghost sm" id="btn-back-search">← Upload another photo</button>
+      </div>
       <div class="engines" id="engines"></div>
     </div>
     <div class="search-grid">
@@ -159,6 +176,7 @@
     <div class="panel-head">
       <h2><span class="num">03</span> anchored on-chain <span class="sub">tamper-evident · independently re-verifiable</span></h2>
       <div class="actions">
+        <button class="btn ghost sm" id="btn-back-chain">← New scan</button>
         <button class="btn ghost" id="btn-reverify">re-verify</button>
         <button class="btn danger" id="btn-tamper">tamper test</button>
       </div>

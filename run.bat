@@ -13,6 +13,6 @@ if not exist .env copy .env.example .env
 python -m verified.cli models || (echo model download failed & pause & exit /b 1)
 python -m verified.cli doctor
 echo.
-echo Starting the UI at http://127.0.0.1:8000  (Ctrl+C to stop)
+echo Starting the UI at http://127.0.0.1:8080  (Ctrl+C to stop)
 python -m verified.cli serve
 pause

@@ -2,6 +2,7 @@
 biometric re-verification -> identity inference -> name expansion -> metadata."""
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -10,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlparse
 
 import cv2
 import numpy as np
@@ -128,6 +130,8 @@ def run_search(
     run_dir: Path,
     emit: Emit = lambda *_: None,
     source: str = "upload",
+    target_url: str = "",
+    name_hint: str = "",
 ) -> SearchResult:
     t0 = time.time()
     raw_dir = run_dir / "raw"
@@ -158,6 +162,45 @@ def run_search(
     # ---- 2. engine fan-out ---------------------------------------------------
     candidates: list[Candidate] = []
     name_hints: list[str] = []
+
+    if name_hint and name_hint.strip():
+        name_hints.append(name_hint.strip())
+
+    if target_url and target_url.strip():
+        clean_target = target_url.strip()
+        if not clean_target.startswith(("http://", "https://")):
+            clean_target = "https://" + clean_target
+        parsed_target = urlparse(clean_target)
+        slug = parsed_target.path.strip("/").split("/")[-1]
+        slug_words = [w.capitalize() for w in re.split(r"[-_.]+", slug) if len(w) > 2 and not w.isdigit()]
+        if len(slug_words) >= 2:
+            extracted_name = " ".join(slug_words[:3])
+            if extracted_name not in name_hints:
+                name_hints.append(extracted_name)
+
+        meta = {}
+        try:
+            meta = fetch_metadata(clean_target, timeout=6)
+        except Exception:  # noqa: BLE001
+            pass
+
+        target_img_url = meta.get("image")
+        if not target_img_url:
+            target_img_url = "data:image/jpeg;base64," + base64.b64encode(full_bytes).decode()
+
+        candidates.append(
+            Candidate(
+                engine="target_url",
+                title=meta.get("title") or f"Target Link: {clean_target}",
+                link=clean_target,
+                source=parsed_target.netloc or "target",
+                thumbnail=target_img_url,
+                image=target_img_url,
+                position=0,
+                extra={"exact": True, "target": True, "title": meta.get("title")},
+            )
+        )
+
     jobs = []
 
     def _lens(kind: str, data: bytes):
@@ -239,7 +282,10 @@ def run_search(
             payload.update({"similarity": round(m.similarity, 3), "band": m.band, "platform": m.platform, "link": m.candidate.link, "title": (m.candidate.title or "")[:90], "face_crop_b64": m.face_crop_b64, "engine": m.candidate.engine})
         emit("search.verify.progress", payload)
 
-    verified = verify_all(engine, face.embedding, shortlist, on_progress=_progress, threshold=settings.match_threshold)
+    is_occluded = bool(getattr(face, "has_sunglasses", False))
+    eff_threshold = max(0.30, settings.match_threshold - (0.06 if is_occluded else 0.0))
+
+    verified = verify_all(engine, face.embedding, shortlist, on_progress=_progress, threshold=settings.match_threshold, occluded=is_occluded)
     timings["verify_s"] = round(time.time() - t2, 2)
 
     # ---- 4. identity inference + expansion -----------------------------------
@@ -281,11 +327,11 @@ def run_search(
         if expansion:
             verified_before = len(shortlist)
             emit("search.verify.start", {"candidates": len(expansion), "shortlist": len(expansion), "phase": "expansion"})
-            verified.extend(verify_all(engine, face.embedding, expansion, on_progress=_progress, threshold=settings.match_threshold))
+            verified.extend(verify_all(engine, face.embedding, expansion, on_progress=_progress, threshold=settings.match_threshold, occluded=is_occluded))
 
     verified = dedupe(verified)
-    matches = [m for m in verified if m.similarity >= settings.match_threshold]
-    rejected = [m for m in verified if m.similarity < settings.match_threshold]
+    matches = [m for m in verified if m.similarity >= eff_threshold]
+    rejected = [m for m in verified if m.similarity < eff_threshold]
 
     # ---- 5. metadata for the top social matches ------------------------------
     top = [m for m in matches if m.candidate.is_social][:8] + [m for m in matches if not m.candidate.is_social][:3]

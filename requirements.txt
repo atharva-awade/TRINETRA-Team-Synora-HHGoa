@@ -1,5 +1,5 @@
 # core inference — pure wheels, no C++ toolchain needed on Windows/macOS/Linux
-onnxruntime>=1.17,<2
+onnxruntime>=1.17,<1.20
 opencv-python-headless>=4.9,<5
 numpy>=1.26,<3
 

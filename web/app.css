@@ -301,6 +301,7 @@ main { padding: 4px 34px 30px; display: grid; grid-template-columns: minmax(0, 1
 }
 @keyframes shine { 0%, 62% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 .btn.big { width: 100%; padding: 14px; font-size: 14.5px; margin-top: 10px; }
+.btn.sm { padding: 6px 12px; font-size: 12px; border-radius: 9px; }
 .btn.ghost { background: transparent; }
 .btn.danger { border-color: rgba(255, 90, 106, .45); color: #ff8f9a; background: rgba(255, 90, 106, .08); }
 .btn.danger:hover:not(:disabled) { background: rgba(255, 90, 106, .16); border-color: rgba(255, 90, 106, .7); }
@@ -376,6 +377,18 @@ main { padding: 4px 34px 30px; display: grid; grid-template-columns: minmax(0, 1
 .hash { margin-top: 12px; font-size: 11px; }
 .hash span { color: var(--muted2); display: block; margin-bottom: 4px; font-size: 10.5px; }
 .hash code { word-break: break-all; color: var(--cyan); font-size: 10.5px; line-height: 1.5; }
+.face-picker { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
+.picker-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-family: var(--display); }
+.face-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.face-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px;
+  background: rgba(244, 226, 200, 0.06); border: 1px solid var(--line2); color: var(--text);
+  font-size: 11px; font-family: var(--mono); cursor: pointer; transition: all 0.2s var(--ease);
+}
+.face-chip:hover { background: rgba(244, 226, 200, 0.14); border-color: var(--cyan); }
+.face-chip.active { background: rgba(56, 224, 255, 0.2); border-color: var(--cyan); color: #fff; box-shadow: 0 0 10px rgba(56, 224, 255, 0.3); font-weight: bold; }
+.badge { display: inline-block; padding: 2px 7px; border-radius: 6px; font-size: 10px; font-family: var(--mono); }
+.badge.warn { background: rgba(255, 179, 71, 0.18); border: 1px solid rgba(255, 179, 71, 0.4); color: var(--sun); }
 
 /* ==========================================================================
    2 — SEARCH
