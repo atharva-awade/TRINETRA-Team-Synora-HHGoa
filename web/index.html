@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>VERIFIED — one face. one post. one chain.</title>
+<title>VERIFIED - one face. one post. one chain.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/static/app.css" />
@@ -84,7 +84,7 @@
         </div>
         <div class="cam-hud" id="cam-hud" hidden>
           <div class="hud-left">
-            <div class="meter"><span>quality</span><div class="bar"><i id="q-bar"></i></div><b id="q-val">–</b></div>
+            <div class="meter"><span>quality</span><div class="bar"><i id="q-bar"></i></div><b id="q-val">-</b></div>
             <div class="meter"><span>sharp</span><div class="bar"><i id="q-sharp"></i></div></div>
             <div class="meter"><span>size</span><div class="bar"><i id="q-size"></i></div></div>
             <div class="meter"><span>frontal</span><div class="bar"><i id="q-front"></i></div></div>
@@ -118,18 +118,18 @@
           <div class="face-row">
             <div class="crop-wrap" id="crop-wrap"><img id="face-crop" alt="face crop" /></div>
             <div class="kv">
-              <div><span>det score</span><b id="f-det">–</b></div>
-              <div><span>quality</span><b id="f-q">–</b></div>
-              <div><span>est. age / gender</span><b id="f-ag">–</b></div>
-              <div><span>faces in frame</span><b id="f-n">–</b></div>
+              <div><span>det score</span><b id="f-det">-</b></div>
+              <div><span>quality</span><b id="f-q">-</b></div>
+              <div><span>est. age / gender</span><b id="f-ag">-</b></div>
+              <div><span>faces in frame</span><b id="f-n">-</b></div>
               <div><span>template</span><b>512-d · L2 = 1.000</b></div>
             </div>
           </div>
           <div class="face-picker" id="face-picker" hidden>
-            <div class="picker-label">multiple faces detected — click to select target:</div>
+            <div class="picker-label">multiple faces detected - click to select target:</div>
             <div class="face-chips" id="face-chips"></div>
           </div>
-          <div class="hash"><span>face commitment · HMAC-SHA256(salt, int8(template))</span><code id="f-commit">–</code></div>
+          <div class="hash"><span>face commitment · HMAC-SHA256(salt, int8(template))</span><code id="f-commit">-</code></div>
         </div>
       </div>
     </div>
@@ -153,7 +153,7 @@
             <div><b data-count id="st-cand">0</b><span>candidates</span></div>
             <div><b data-count id="st-ver">0</b><span>same person</span></div>
             <div><b data-count id="st-rej">0</b><span>look-alikes rejected</span></div>
-            <div><b id="st-best">–</b><span>best cosine</span></div>
+            <div><b id="st-best">-</b><span>best cosine</span></div>
           </div>
           <div class="cand-grid" id="cands"></div>
         </div>
@@ -185,7 +185,7 @@
       <div class="card receipt" id="receipt">
         <div class="stamp" id="stamp">ANCHORED</div>
         <div class="receipt-head">
-          <div><div class="eyebrow">record</div><div class="big-id" id="r-id">#–</div><div class="chainname" id="r-chain">–</div></div>
+          <div><div class="eyebrow">record</div><div class="big-id" id="r-id">#-</div><div class="chainname" id="r-chain">-</div></div>
           <img id="r-qr" class="qr" alt="qr" hidden />
         </div>
         <div class="selected" id="r-selected"></div>
@@ -229,7 +229,7 @@
     </g>
   </svg>
   <div class="foot-text">
-    <span>less noise. more signal. — InsightFace buffalo_l · SerpApi · Google Vision · Bluesky · Ethereum Sepolia · EAS · IPFS · OpenTimestamps</span>
+    <span>less noise. more signal. - InsightFace buffalo_l · SerpApi · Google Vision · Bluesky · Ethereum Sepolia · EAS · IPFS · OpenTimestamps</span>
     <span class="muted">consent-first · no biometric leaves your machine unhashed · query crops expire in 1h · built for Hacker House Goa 2026</span>
   </div>
 </footer>

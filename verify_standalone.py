@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""VERIFIED — standalone third-party verifier.
+"""VERIFIED - standalone third-party verifier.
 
 Anyone can check an anchored record without this project's run folder, without
 a wallet and without trusting us. All it needs is:
@@ -66,7 +66,7 @@ def main() -> int:
 
     checks: list[tuple[str, bool, str]] = []
     exists, rid, ts, submitter = c.functions.verify(Web3.to_bytes(hexstr=record_hash)).call()
-    checks.append(("keccak256(bundle) is anchored on this chain", bool(exists), f"record #{rid}" if exists else "not found — the bundle differs from anything anchored here"))
+    checks.append(("keccak256(bundle) is anchored on this chain", bool(exists), f"record #{rid}" if exists else "not found - the bundle differs from anything anchored here"))
     checks.append(("recordHash matches record #%d" % a.record, rec["recordHash"] == record_hash, f"{rec['recordHash'][:18]}… vs {record_hash[:18]}…"))
     checks.append(("Merkle root over all fields matches", rec["merkleRoot"] == merkle_root, f"{rec['merkleRoot'][:18]}… vs {merkle_root[:18]}…"))
     checks.append(("post URL matches", rec["uri"] == bundle["match"]["url"], rec["uri"]))

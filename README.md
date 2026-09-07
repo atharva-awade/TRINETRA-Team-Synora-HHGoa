@@ -1,4 +1,4 @@
-# 👁️ TRINETRA — Decentralized Identity & Deepfake-Resistant Facial Provenance Pipeline
+# 👁️ TRINETRA - Decentralized Identity & Deepfake-Resistant Facial Provenance Pipeline
 
 <p align="center">
   <img src="docs/banner.svg" alt="TRINETRA Banner" width="100%"/>
@@ -220,5 +220,5 @@ pytest -v
 
 ## 👥 Team Synora
 
-- **Atharva Awade** — *AI Engineer & Blockchain Architect* — [GitHub](https://github.com/atharva-awade) · [LinkedIn](https://www.linkedin.com/in/atharva-awade-1023a1283)
+- **Atharva Awade** - *AI Engineer & Blockchain Architect* - [GitHub](https://github.com/atharva-awade) · [LinkedIn](https://www.linkedin.com/in/atharva-awade-1023a1283)
 - Built for **Hacker House Goa 2026**

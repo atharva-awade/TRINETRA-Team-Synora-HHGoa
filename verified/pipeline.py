@@ -416,7 +416,7 @@ class Pipeline:
             check("bundle.canonical", ok, "stored bundle bytes are in canonical form" if ok else "stored bundle bytes differ from canonical serialisation")
         else:
             ok = raw == stored
-            check("bundle.canonical", ok, "supplied bundle is byte-identical to the stored one" if ok else f"supplied bundle differs from the stored bundle by {abs(len(raw) - len(stored))} byte(s) — recomputing every hash from the supplied bytes", expected=f"{len(stored)} bytes stored", actual=f"{len(raw)} bytes supplied")
+            check("bundle.canonical", ok, "supplied bundle is byte-identical to the stored one" if ok else f"supplied bundle differs from the stored bundle by {abs(len(raw) - len(stored))} byte(s) - recomputing every hash from the supplied bytes", expected=f"{len(stored)} bytes stored", actual=f"{len(raw)} bytes supplied")
         rh = ev.record_hash(bundle)
         mr = ev.bundle_merkle_root(bundle)
 

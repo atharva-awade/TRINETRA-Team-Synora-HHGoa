@@ -1,5 +1,5 @@
 /* ============================================================================
-   VERIFIED — front-end controller.
+   VERIFIED - front-end controller.
    Vanilla JS, no build step. Drives the sunrise scene from pipeline progress,
    streams pipeline events over SSE, renders candidates / matches / receipt /
    verification checks with staged motion.
@@ -10,8 +10,8 @@
   // ---------------------------------------------------------------- helpers
   const $ = (s) => document.querySelector(s);
   const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
-  const fmt = (n, d = 3) => (typeof n === "number" ? n.toFixed(d) : "–");
-  const short = (h, n = 10) => (h && h.length > 2 * n + 2 ? `${h.slice(0, n + 2)}…${h.slice(-n)}` : h || "–");
+  const fmt = (n, d = 3) => (typeof n === "number" ? n.toFixed(d) : "-");
+  const short = (h, n = 10) => (h && h.length > 2 * n + 2 ? `${h.slice(0, n + 2)}…${h.slice(-n)}` : h || "-");
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const safeHref = (u) => (/^https?:\/\//i.test(String(u || "")) ? String(u) : "#");
   const safeImg = (u) => (/^(https?:\/\/|data:image\/)/i.test(String(u || "")) ? String(u) : "");
@@ -73,7 +73,7 @@
       const on = Object.entries(s.engines || {}).filter(([, v]) => v).map(([k]) => k.replace("google_", "g-").replace("name_expansion", "name-sweep"));
       const e = $("#pill-engines");
       e.className = "pill " + (s.engines && s.engines.google_lens ? "ok" : "warn");
-      e.textContent = `engines: ${on.join(" · ") || "none — set SERPAPI_KEY"}${s.ipfs ? " · ipfs" : ""}${s.eas ? " · eas" : ""}${s.ots ? " · btc" : ""}`;
+      e.textContent = `engines: ${on.join(" · ") || "none - set SERPAPI_KEY"}${s.ipfs ? " · ipfs" : ""}${s.eas ? " · eas" : ""}${s.ots ? " · btc" : ""}`;
     } catch { $("#pill-chain").className = "pill bad"; $("#pill-chain").textContent = "backend offline"; }
   }
 
@@ -83,7 +83,7 @@
   async function startCam() {
     try {
       state.stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 800 }, facingMode: "user" }, audio: false });
-    } catch (e) { tick(`camera unavailable: ${e.message} — use upload`, "bad"); alert("Camera unavailable: " + e.message + "\n\nUse “upload photo” instead — the pipeline is identical."); return; }
+    } catch (e) { tick(`camera unavailable: ${e.message} - use upload`, "bad"); alert("Camera unavailable: " + e.message + "\n\nUse “upload photo” instead - the pipeline is identical."); return; }
     video.srcObject = state.stream;
     state.source = "webcam"; state.livenessPassed = false;
     $("#cam-wrap").classList.remove("upload");
@@ -163,8 +163,8 @@
 
     const hints = [...(f.hints || [])];
     if (!r.liveness.passed) hints.unshift("liveness · turn your head left, then right");
-    if (f.others) hints.push(`${f.others} other face(s) — the largest is used`);
-    $("#hint").textContent = hints.join(" · ") || "ready — hold still and capture";
+    if (f.others) hints.push(`${f.others} other face(s) - the largest is used`);
+    $("#hint").textContent = hints.join(" · ") || "ready - hold still and capture";
     $("#btn-capture").disabled = state.busy || !(good && r.liveness.passed);
   }
 
@@ -230,7 +230,7 @@
         chips.innerHTML = "";
         faces.forEach((f, i) => {
           const chip = el("button", "face-chip" + (i === state.selectedFaceIndex ? " active" : ""));
-          const ag = f.age_range ? `${f.age_range[0]}–${f.age_range[1]}` : (f.age || "?");
+          const ag = f.age_range ? `${f.age_range[0]}-${f.age_range[1]}` : (f.age || "?");
           chip.innerHTML = `#${i+1} (${ag}y, ${f.gender || "?"}${f.has_sunglasses ? " 🕶️" : ""})`;
           chip.addEventListener("click", () => {
             state.selectedFaceIndex = i;
@@ -264,9 +264,9 @@
     $("#face-card").hidden = false;
     $("#f-det").textContent = fmt(f.det_score);
     $("#f-q").textContent = fmt((f.quality || {}).overall, 2);
-    let ag = f.age ? `${f.age}` : "–";
+    let ag = f.age ? `${f.age}` : "-";
     if (f.age_range && f.age_range.length === 2) {
-      ag = `${f.age_range[0]}–${f.age_range[1]} (est. ~${f.age})`;
+      ag = `${f.age_range[0]}-${f.age_range[1]} (est. ~${f.age})`;
     }
     $("#f-ag").innerHTML = `${esc(ag)} · ${esc(f.gender ?? "?")}` +
       (f.has_sunglasses ? ' <span class="badge warn">🕶️ sunglasses</span>' : '');
@@ -323,9 +323,9 @@
     $("#match-count").textContent = ""; $("#search-sub").textContent = "";
     $("#tamper-note").hidden = true; $("#stamp").classList.remove("on");
     $("#verdict").className = "verdict"; $("#verdict").textContent = "…";
-    $("#r-qr").hidden = true; $("#r-id").textContent = "#–"; $("#r-chain").textContent = "–"; $("#r-selected").innerHTML = "";
+    $("#r-qr").hidden = true; $("#r-id").textContent = "#-"; $("#r-chain").textContent = "-"; $("#r-selected").innerHTML = "";
     ["st-cand", "st-ver", "st-rej"].forEach((id) => { const n = $("#" + id); n.dataset.v = 0; n.textContent = "0"; });
-    $("#st-best").textContent = "–";
+    $("#st-best").textContent = "-";
     Object.assign(state, { matches: [], selected: null, anchored: false, candSeen: 0, candTotal: 0, verified: 0, rejected: 0, best: 0 });
   }
 
@@ -434,9 +434,9 @@
     if (crop) $("#face-crop").src = crop;
     $("#f-det").textContent = fmt(d.det_score);
     $("#f-q").textContent = fmt(d.quality.overall, 2);
-    let ag = d.age ? `${d.age}` : "–";
+    let ag = d.age ? `${d.age}` : "-";
     if (d.age_range && d.age_range.length === 2) {
-      ag = `${d.age_range[0]}–${d.age_range[1]} (est. ~${d.age})`;
+      ag = `${d.age_range[0]}-${d.age_range[1]} (est. ~${d.age})`;
     }
     $("#f-ag").innerHTML = `${esc(ag)} · ${esc(d.gender ?? "?")}` +
       (d.has_sunglasses ? ' <span class="badge warn">🕶️ sunglasses</span>' : '');
@@ -465,7 +465,7 @@
     countTo($("#st-cand"), state.candSeen);
     countTo($("#st-ver"), state.verified);
     countTo($("#st-rej"), state.rejected);
-    $("#st-best").textContent = state.best ? fmt(state.best) : "–";
+    $("#st-best").textContent = state.best ? fmt(state.best) : "-";
   }
 
   function onCandidate(d) {
@@ -499,7 +499,7 @@
     const box = $("#matches");
     box.innerHTML = "";
     if (!state.matches.length) {
-      box.innerHTML = '<div class="empty">no biometrically verified match yet — engines returned look-alikes only.<br/>nothing is anchored unless the face verifies.</div>';
+      box.innerHTML = '<div class="empty">no biometrically verified match yet - engines returned look-alikes only.<br/>nothing is anchored unless the face verifies.</div>';
       return;
     }
     const manual = !$("#auto-anchor").checked && !state.anchored;
@@ -591,7 +591,7 @@
     $("#verdict").className = "verdict"; $("#verdict").textContent = "checking…";
     if (d.tamper) {
       $("#tamper-note").hidden = false;
-      $("#tamper-note").textContent = `TAMPER TEST — ${d.tamper.field}: ${JSON.stringify(d.tamper.old)} → ${JSON.stringify(d.tamper.new)} in the local bundle. Re-running every check against the immutable on-chain record…`;
+      $("#tamper-note").textContent = `TAMPER TEST - ${d.tamper.field}: ${JSON.stringify(d.tamper.old)} → ${JSON.stringify(d.tamper.new)} in the local bundle. Re-running every check against the immutable on-chain record…`;
       tick(`tamper test · ${d.tamper.field} altered`, "bad");
     } else $("#tamper-note").hidden = true;
   }
@@ -612,14 +612,14 @@
     const cBtn = $("#btn-change-photo"); if (cBtn && state.source === "upload") cBtn.hidden = false;
     loadLedger();
     if (d.status === "no_match") noMatch(d);
-    if (d.status === "no_face") { $("#hint").textContent = "no face detected — try again with better light"; tick("no face detected", "bad"); }
+    if (d.status === "no_face") { $("#hint").textContent = "no face detected - try again with better light"; tick("no face detected", "bad"); }
     if (d.status === "matches" && d.manual) tick("pick a match and press anchor", "hot");
   }
 
   function noMatch(d) {
     $("#match-count").textContent = "no verified match";
     const box = $("#matches");
-    box.innerHTML = '<div class="empty">the search ran, but no candidate passed biometric verification.<br/><b>nothing was anchored</b> — the chain never receives unverified claims.</div>';
+    box.innerHTML = '<div class="empty">the search ran, but no candidate passed biometric verification.<br/><b>nothing was anchored</b> - the chain never receives unverified claims.</div>';
 
     const prob = (d.rejected_top || []).filter((m) => m.similarity >= 0.30);
     if (prob.length) {
@@ -700,7 +700,7 @@
       document.querySelectorAll(".step").forEach((n) => (n.className = "step done"));
       reveal("#panel-search"); reveal("#panel-chain");
       const f = run.face || {};
-      if (f.commitment) { $("#face-card").hidden = false; $("#f-commit").textContent = f.commitment; $("#f-det").textContent = fmt(f.det_score); $("#f-q").textContent = fmt((f.quality || {}).overall, 2); $("#f-ag").textContent = `${f.age ?? "?"} · ${f.gender ?? "?"}`; $("#f-n").textContent = f.faces_in_frame ?? "–"; }
+      if (f.commitment) { $("#face-card").hidden = false; $("#f-commit").textContent = f.commitment; $("#f-det").textContent = fmt(f.det_score); $("#f-q").textContent = fmt((f.quality || {}).overall, 2); $("#f-ag").textContent = `${f.age ?? "?"} · ${f.gender ?? "?"}`; $("#f-n").textContent = f.faces_in_frame ?? "-"; }
       $("#face-crop").src = `/api/run/${runId}/file/query_face.jpg`;
       setShot(`/api/run/${runId}/file/query_annotated.jpg`);
       $("#cam-wrap").classList.add("upload");
@@ -718,7 +718,7 @@
       $("#stamp").classList.add("on");
       const v = run.verification || {};
       (v.checks || []).forEach(onCheck);
-      $("#verdict").className = "verdict " + (v.verdict === "VERIFIED" ? "ok" : "bad"); $("#verdict").textContent = v.verdict || "—";
+      $("#verdict").className = "verdict " + (v.verdict === "VERIFIED" ? "ok" : "bad"); $("#verdict").textContent = v.verdict || "-";
       $("#bundle").textContent = "loading bundle…";
       fetch(`/api/run/${runId}/file/bundle.pretty.json`).then((r) => r.text()).then((t) => { $("#bundle").textContent = t; $("#bundle-meta").textContent = `${dg.leaf_count || "?"} Merkle leaves · ${dg.canonical_size || "?"} bytes · keccak ${short(dg.record_hash, 6)}`; }).catch(() => {});
       $("#match-count").textContent = `${state.matches.length} verified · record #${a.record_id}`;
@@ -735,7 +735,7 @@
     if (ev === "stage") msg = `${d.stage} → ${d.status}${d.message ? " · " + d.message : ""}`;
     else if (ev === "search.verify.progress") { if (d.similarity === undefined) return; msg = `${fmt(d.similarity)} ${d.band} ${d.platform || "web"} ${d.link}`; }
     else if (ev === "chain.log") msg = d.message;
-    else if (ev === "verify.check") msg = `${d.ok ? "PASS" : "FAIL"} ${d.name} — ${d.detail}`;
+    else if (ev === "verify.check") msg = `${d.ok ? "PASS" : "FAIL"} ${d.name} - ${d.detail}`;
     else if (ev === "scan.done") msg = `${(d.matches || []).length} matches persisted`;
     else msg = JSON.stringify(d, (k, v) => (typeof v === "string" && v.startsWith("data:image") ? "[img]" : v)).slice(0, 230);
     const row = el("div");
@@ -761,13 +761,13 @@
         const tr = el("tr");
         tr.style.animationDelay = `${Math.min(i, 10) * 35}ms`;
         tr.style.cursor = "pointer";
-        tr.title = "open this run — enables re-verify / tamper test";
+        tr.title = "open this run - enables re-verify / tamper test";
         tr.addEventListener("click", (ev) => { if (ev.target.tagName !== "A") openRun(r.run_id); });
         tr.innerHTML =
           `<td><span class="open">↗ ${esc(r.run_id)}</span></td><td>${esc(r.platform || "")}</td>` +
           `<td><a href="${esc(safeHref(r.link))}" target="_blank" rel="noopener noreferrer">${esc(short(r.link, 26))}</a></td>` +
           `<td>${fmt(r.similarity)}</td>` +
-          `<td>${r.tx && /^https?:/.test(r.tx) ? `<a href="${esc(r.tx)}" target="_blank" rel="noopener noreferrer">#${esc(String(r.record_id))} ↗</a>` : "#" + esc(String(r.record_id ?? "–"))}</td>` +
+          `<td>${r.tx && /^https?:/.test(r.tx) ? `<a href="${esc(r.tx)}" target="_blank" rel="noopener noreferrer">#${esc(String(r.record_id))} ↗</a>` : "#" + esc(String(r.record_id ?? "-"))}</td>` +
           `<td>${esc(r.verdict || "")}</td>`;
         tb.appendChild(tr);
       });
